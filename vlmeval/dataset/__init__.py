@@ -61,6 +61,8 @@ from .EgoExoBench.egoexobench import EgoExoBench_MCQ
 
 from .worldsense import WorldSense
 from .qbench_video import QBench_Video, QBench_Video_MCQ, QBench_Video_VQA
+from .sitebench import SiteBenchVideo
+from .vsibench import VsiBench
 
 from .cmmmu import CMMMU
 from .emma import EMMADataset
@@ -92,6 +94,7 @@ from .mindcubebench import MindCubeBench
 from .embspatialbench import EmbSpatialBench
 from .viewspatialbench import ViewSpatialBench
 from .mmsibench import MMSIBench
+from .sitebench import SiteBenchImage
 
 from .reasonmap_plus import ReasonMap_Plus
 
@@ -224,7 +227,7 @@ IMAGE_DATASET = [
     AyaVisionBench, TopViewRS, VLMBias, MMHELIX, MedqbenchMCQDataset, MathCanvas,
     MedqbenchPairedDescriptionDataset, MedqbenchCaptionDataset, ChartMuseum, ChartQAPro, ReasonMap_Plus,
     olmOCRBench, OceanOCRBench, MATBench, VLRMBench,
-    MindCubeBench, EmbSpatialBench, ViewSpatialBench, MMSIBench
+    MindCubeBench, EmbSpatialBench, ViewSpatialBench, MMSIBench, SiteBenchImage
 ]
 
 VIDEO_DATASET = [
