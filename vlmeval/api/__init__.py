@@ -21,6 +21,8 @@ from .doubao_vl_api import DoubaoVL
 from .mug_u import MUGUAPI
 from .kimivl_api import KimiVLAPIWrapper, KimiVLAPI
 
+from .gpt_proxy_api import OpenAIProxyWrapper, GPT4VProxy, GPT5VProxy
+
 __all__ = [
     'OpenAIWrapper', 'HFChatModel', 'GeminiWrapper', 'GPT4V', 'Gemini',
     'QwenVLWrapper', 'QwenVLAPI', 'QwenAPI', 'Claude3V', 'Claude_Wrapper',
@@ -28,4 +30,9 @@ __all__ = [
     'Qwen2VLAPI', 'BlueLMWrapper', 'BlueLM_API', 'JTVLChatAPI', 'JTVLChatAPI_Mini',
     'bailingMMAPI', 'TaiyiAPI', 'TeleMMAPI', 'SiliconFlowAPI', 'LMDeployAPI',
     'TaichuVLAPI', 'TaichuVLRAPI', 'DoubaoVL', "MUGUAPI", 'KimiVLAPIWrapper', 'KimiVLAPI'
+]
+
+# Zoe apis
+__all__ += [
+    'OpenAIProxyWrapper', 'GPT4VProxy', 'GPT5VProxy'
 ]

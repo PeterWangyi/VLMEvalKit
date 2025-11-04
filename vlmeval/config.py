@@ -1763,6 +1763,159 @@ internvl_series = {}
 for group in internvl_groups:
     internvl_series.update(group)
 
+
+zoe_api_model = {
+    "gpt-4o-2024-11-20_proxy": partial(
+        GPT4VProxy,
+        model="gpt-4o-2024-11-20",
+        temperature=0,
+        img_size=-1,
+        img_detail="high",
+        retry=10,
+        verbose=False,
+    ),  
+}
+
+
+qwen25_series_model = {
+    "SpatialLadder-3B_qwen25": partial(
+        Qwen2VLChat,
+        model_path="hongxingli/SpatialLadder-3B",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+        model_name="SpatialLadder-3B_qwen25"
+    ),
+    "SpaceR-SFT-7B_qwen25": partial(
+        Qwen2VLChat,
+        model_path="RUBBISHLIKE/SpaceR-SFT-7B",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+        model_name="SpaceR-SFT-7B_qwen25"
+    ),
+    "ViLaSR_qwen25": partial(
+        Qwen2VLChat,
+        model_path="inclusionAI/ViLaSR",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+        model_name="ViLaSR_qwen25"
+    )
+}
+
+
+qwen25_ddp = {
+    "Qwen2.5-VL-3B-Instruct_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="Qwen/Qwen2.5-VL-3B-Instruct",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "Qwen2.5-VL-7B-Instruct_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="Qwen/Qwen2.5-VL-7B-Instruct",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "MindCube-Qwen2.5VL-RawQA-SFT_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="MLL-Lab/MindCube-Qwen2.5VL-RawQA-SFT",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "MindCube-Qwen2.5VL-Aug-CGMap-FFR-Out-SFT_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="MLL-Lab/MindCube-Qwen2.5VL-Aug-CGMap-FFR-Out-SFT",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "MindCube-Qwen2.5VL-Plain-CGMap-FFR-Out-SFT_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="MLL-Lab/MindCube-Qwen2.5VL-Plain-CGMap-FFR-Out-SFT",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "SpatialLadder-3B_qwen25_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="hongxingli/SpatialLadder-3B",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+        model_name="SpatialLadder-3B_qwen25"
+    ),
+    "SpaceR-SFT-7B_qwen25_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="RUBBISHLIKE/SpaceR-SFT-7B",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+        model_name='SpatialLadder-3B_qwen25_DDP'
+    ),
+    "ViLaSR_qwen25_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="inclusionAI/ViLaSR",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+        model_name="ViLaSR_qwen25_DDP"
+    )
+}
+
+
+qwen3_ddp = {
+    "Qwen3-VL-2B-Instruct_DDP": partial(
+        Qwen3VLChat_SingleCard,
+        model_path="Qwen/Qwen3-VL-2B-Instruct",
+        use_custom_prompt=False,
+        use_vllm=False,
+        temperature=0.7, 
+        max_new_tokens=2048,
+    ),    
+    "Qwen3-VL-4B-Instruct_DDP": partial(
+        Qwen3VLChat_SingleCard,
+        model_path="Qwen/Qwen3-VL-4B-Instruct",
+        use_custom_prompt=False,
+        use_vllm=False,
+        temperature=0.7, 
+        max_new_tokens=2048,
+    ),
+    "Qwen3-VL-8B-Instruct_DDP": partial(
+        Qwen3VLChat_SingleCard,
+        model_path="Qwen/Qwen3-VL-8B-Instruct",
+        use_custom_prompt=False,
+        use_vllm=False,
+        temperature=0.7, 
+        max_new_tokens=2048,
+    ),
+    "Qwen3-VL-8B-Thinking_DDP": partial(
+        Qwen3VLChat_SingleCard,
+        model_path="Qwen/Qwen3-VL-8B-Thinking",
+        use_custom_prompt=False,
+        temperature=0.7, 
+        max_new_tokens=16384
+    ),
+}
+
+
+internvl3_ddp = {
+    "InternVL3-8B_DDP": partial(
+        InternVLChat_SingleCard, model_path="OpenGVLab/InternVL3-8B", version="V2.0",
+    ),
+    "InternVL3-2B_DDP": partial(
+        InternVLChat_SingleCard, model_path="OpenGVLab/InternVL3-2B", version="V2.0",
+    ),
+}
+
+
+zoe_add_models = [qwen25_series_model, qwen25_ddp, internvl3_ddp, qwen3_ddp]
+
+
 supported_VLM = {}
 
 model_groups = [
@@ -1780,6 +1933,10 @@ model_groups = [
     flash_vl, kimi_vllm_series, oryx_series, treevgr_series, varco_vision_series, qtunevl_series, xvl_series, thyme_series, logics_series, 
     cosmos_series, keye_series, qianfanvl_series, lfm2vl_series
 ]
+
+model_groups.extend(zoe_add_models)
+
+model_groups.extend(zoe_api_model)
 
 for grp in model_groups:
     supported_VLM.update(grp)
