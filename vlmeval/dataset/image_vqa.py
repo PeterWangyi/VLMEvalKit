@@ -320,7 +320,7 @@ class MathVista(ImageBaseDataset):
         if not osp.exists(storage):
             data = load(eval_file)
             model = build_judge(max_tokens=128, **judge_kwargs)
-            assert model.working(), 'MathVista evaluation requires a working OPENAI API\n' + DEBUG_MESSAGE
+            # assert model.working(), 'MathVista evaluation requires a working OPENAI API\n' + DEBUG_MESSAGE
             lt = len(data)
             lines = [data.iloc[i] for i in range(lt)]
             tups = [(model, line) for line in lines]

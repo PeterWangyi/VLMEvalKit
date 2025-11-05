@@ -1774,6 +1774,15 @@ zoe_api_model = {
         retry=10,
         verbose=False,
     ),  
+    "gpt-4o-2024-11-20_proxy111": partial(
+        GPT4VProxy,
+        model="gpt-4o-2024-11-20",
+        temperature=0,
+        img_size=-1,
+        img_detail="high",
+        retry=10,
+        verbose=False,
+    ),  
 }
 
 
@@ -1916,6 +1925,7 @@ internvl3_ddp = {
 zoe_add_models = [qwen25_series_model, qwen25_ddp, internvl3_ddp, qwen3_ddp]
 
 
+
 supported_VLM = {}
 
 model_groups = [
@@ -1931,12 +1941,12 @@ model_groups = [
     ross_series, emu_series, ola_series, ursa_series, gemma_series,
     long_vita_series, ristretto_series, kimi_series, aguvis_series, hawkvl_series, 
     flash_vl, kimi_vllm_series, oryx_series, treevgr_series, varco_vision_series, qtunevl_series, xvl_series, thyme_series, logics_series, 
-    cosmos_series, keye_series, qianfanvl_series, lfm2vl_series
+    cosmos_series, keye_series, qianfanvl_series, lfm2vl_series, zoe_api_model
 ]
 
 model_groups.extend(zoe_add_models)
 
-model_groups.extend(zoe_api_model)
+# model_groups.extend(zoe_api_model)
 
 for grp in model_groups:
     supported_VLM.update(grp)
