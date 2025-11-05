@@ -1,7 +1,7 @@
 import torch
 
 torch.set_grad_enabled(False)
-torch.manual_seed(1234)
+# torch.manual_seed(1234)
 from .aria import Aria
 from .base import BaseModel
 from .hawk_vl import HawkVL
@@ -34,8 +34,8 @@ from .omnilmm import OmniLMM12B
 from .open_flamingo import OpenFlamingo
 from .pandagpt import PandaGPT
 from .qwen_vl import QwenVL, QwenVLChat
-from .qwen2_vl import Qwen2VLChat, Qwen2VLChatAguvis
-from .qwen3_vl import Qwen3VLChat
+from .qwen2_vl import Qwen2VLChat, Qwen2VLChatAguvis, Qwen2VLChat_SingleCard
+from .qwen3_vl import Qwen3VLChat, Qwen3VLChat_SingleCard
 from .transcore_m import TransCoreM
 from .visualglm import VisualGLM
 from .xcomposer import (
@@ -46,7 +46,7 @@ from .xcomposer import (
     XComposer2d5,
 )
 from .yi_vl import Yi_VL
-from .internvl import InternVLChat
+from .internvl import InternVLChat, InternVLChat_SingleCard
 from .deepseek_vl import DeepSeekVL
 from .deepseek_vl2 import DeepSeekVL2
 from .janus import Janus
