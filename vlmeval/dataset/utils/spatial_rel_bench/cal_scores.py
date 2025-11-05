@@ -202,10 +202,15 @@ def eval_mcq_core(
         metric_order = ['overall'] + [f'{c}_accuracy' for c in order] + \
                        [k for k in acc_df['metric'].tolist()
                         if k not in (['overall'] + [f'{c}_accuracy' for c in order])]
-        acc_df = acc_df.set_index('metric').reindex(metric_order).reset_index()
-        acc_df = acc_df.dropna(subset=['value'])
-        acc_df.to_csv(acc_tsv_path, sep='\t', index=False)
-        print(f"[save] accuracy table saved to {acc_tsv_path}")
+        # acc_df = acc_df.set_index('metric').reindex(metric_order).reset_index()
+        # acc_df = acc_df.dropna(subset=['value'])
+        # acc_df.to_csv(acc_tsv_path, sep='\t', index=False)
+        # print(f"[save] accuracy table saved to {acc_tsv_path}")
+
+        acc_df = acc_df.set_index('metric').reindex(metric_order).dropna(subset=['value'])
+        wide = acc_df.T                             # 列 = metric，只有一行
+        wide.to_csv(acc_tsv_path, sep='\t', index=False, float_format='%.4f')
+
     except Exception as e:
         warnings.warn(f"[save] failed to save acc tsv to {acc_tsv_path}: {e}")
 

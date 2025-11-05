@@ -378,8 +378,16 @@ class VsiBench(VideoBaseDataset):
                 [(k, v) for k, v in summary.items() if k not in ('tabulated_keys', 'tabulated_results')],
                 columns=["metric", "value"]
             )
-            acc_df.to_csv(acc_tsv_path, sep="\t", index=False)
-            print(f"[save] accuracy table saved to {acc_tsv_path}")
+            # acc_df.to_csv(acc_tsv_path, sep="\t", index=False)
+            # print(f"[save] accuracy table saved to {acc_tsv_path}")
+
+            # 横向一行：列=metric
+            wide = acc_df.set_index("metric").T
+            wide.index = [""]  # 去掉行索引名字
+
+            wide.to_csv(acc_tsv_path, sep="\t", index=False, float_format="%.4f")
+            print(f"[save] accuracy table saved to {acc_tsv_path} (wide)")
+
         except Exception as e:
             warnings.warn(f"[save] failed to save acc tsv to {acc_tsv_path}: {e}")
 

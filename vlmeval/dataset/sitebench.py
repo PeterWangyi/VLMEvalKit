@@ -167,10 +167,18 @@ class SiteBenchBase:
 
             metric_order += [k for k in acc_df['metric'].tolist() if k not in metric_order]
 
-            acc_df = acc_df.set_index('metric').reindex(metric_order).reset_index()
-            acc_df = acc_df.dropna(subset=['value'])
-            acc_df.to_csv(acc_tsv_path, sep='\t', index=False)
-            print(f"[save] accuracy/CAA table saved to {acc_tsv_path}")
+            # acc_df = acc_df.set_index('metric').reindex(metric_order).reset_index()
+            # acc_df = acc_df.dropna(subset=['value'])
+            # acc_df.to_csv(acc_tsv_path, sep='\t', index=False)
+            # print(f"[save] accuracy/CAA table saved to {acc_tsv_path}")
+
+            # 先按顺序对齐，再转置为一行
+            acc_df = acc_df.set_index('metric').reindex(metric_order).dropna(subset=['value'])
+            wide = acc_df.T                             # 列 = metric，只有一行
+            wide.to_csv(acc_tsv_path, sep='\t', index=False, float_format='%.4f')
+
+            print(f"[save] accuracy/CAA table saved to {acc_tsv_path} (wide)")
+
         except Exception as e:
             warnings.warn(f"[save] failed to save acc tsv to {acc_tsv_path}: {e}")
 
