@@ -1916,6 +1916,9 @@ lfm2vl_series = {
     "LFM2-VL-3B": partial(LFM2VL, model_path="LiquidAI/LFM2-VL-3B"),
 }
 
+bagel_series = {
+    "BAGEL-7B-MoT": partial(Bagel, model_path='ByteDance-Seed/BAGEL-7B-MoT'),
+}
 
 spatial_related_models = {
     # 3B models
@@ -2055,8 +2058,8 @@ model_groups = [
     lfm2vl_series, rbdashmm_api_series_lmdeploy, interns1_series
 ]
 
-model_groups.append(spatial_related_models)
-model_groups.append(sensenova_si_series)
+# add by EASI team 
+model_groups.extend([bagel_series, spatial_related_models, sensenova_si_series])
 
 for grp in model_groups:
     supported_VLM.update(grp)
