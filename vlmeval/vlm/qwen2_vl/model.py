@@ -250,17 +250,14 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                 cache_path = get_cache_path(model_path, repo_type='models')
             model_path = cache_path
 
-        self.model_path = model_path
-
-
-        import os
         user_model_path = os.environ.get('Qwen25_ckpt_path', None)
         if user_model_path is not None:
             self.model_path = user_model_path
 
         print(f"Using Qwen25 ckpt from : {self.model_path}")
 
-
+        self.model_path = model_path
+        
         MODEL_CLS = None
 
         cfg_json_path = os.path.join(self.model_path, 'config.json')
@@ -818,7 +815,6 @@ class Qwen2VLChat_SingleCard(Qwen2VLChat):
                  use_audio_in_video: bool = False,
                  device_id: int = 0,
                  force_single_device: bool = True,
-                 model_name: str | None = None,
                  **kwargs
                 ):
         # 1) 先设默认设备到目标卡（影响后续 'cuda' 默认指向）
@@ -831,10 +827,6 @@ class Qwen2VLChat_SingleCard(Qwen2VLChat):
         # system_prompt = "You are a helpful assistant."
         # min_pixels = int(256 * 28 * 28)
         # max_pixels = int(1605632)
-
-        self.model_name = model_name if model_name is not None else model_path
-
-        print(f" self. model_name: {self.model_name}")
 
         # 2) 保存你要的设备字符串，后面统一用
         self.device = f"cuda:{device_id}"
@@ -912,7 +904,13 @@ class Qwen2VLChat_SingleCard(Qwen2VLChat):
         self.FRAME_FACTOR = 2
 
         assert model_path is not None
-        self.model_path = model_path
+
+        if not os.path.exists(model_path):
+            cache_path = get_cache_path(model_path, repo_type='models')
+            if cache_path is None:
+                snapshot_download(repo_id=model_path)
+                cache_path = get_cache_path(model_path, repo_type='models')
+            model_path = cache_path
 
         user_model_path = os.environ.get('Qwen25_ckpt_path', None)
         if user_model_path is not None:
@@ -920,24 +918,31 @@ class Qwen2VLChat_SingleCard(Qwen2VLChat):
 
         print(f"Using Qwen25 ckpt from : {self.model_path}")
 
-        # 4) 选择对应的 MODEL_CLS 和 processor（与父类一致）
+        self.model_path = model_path
+        
         MODEL_CLS = None
-        def listinstr(keys, s):  # 父类里用到的小工具，这里补一下
-            s = s or ""
-            return any(k in s for k in keys)
 
-        if listinstr(['omni'], self.model_name.lower()):
+        cfg_json_path = os.path.join(self.model_path, 'config.json')
+        assert cfg_json_path is not None, 'Qwen series models require a config.json file to specify the architecture.'
+
+        with open(cfg_json_path, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+            architectures = str(cfg.get("architectures", None)).lower()
+
+        if listinstr(['omni'], architectures):
             try:
                 from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor
             except Exception as err:
-                logging.critical("pip install git+https://github.com/huggingface/transformers@3a1ead0aabed473eafe527915eea8c197d424356")
+                logging.critical("pip install git+https://github.com/huggingface/transformers@3a1ead0aabed473eafe527915eea8c197d424356")  # noqa: E501
                 raise err
             MODEL_CLS = Qwen2_5OmniForConditionalGeneration
             self.processor = Qwen2_5OmniProcessor.from_pretrained(self.model_path)
-        elif listinstr(['2.5', '2_5', 'qwen25', 'mimo'], self.model_name.lower()):
+
+        elif listinstr(['qwen2_5'], architectures):
             from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
             MODEL_CLS = Qwen2_5_VLForConditionalGeneration
             self.processor = AutoProcessor.from_pretrained(self.model_path)
+
         else:
             from transformers import Qwen2VLForConditionalGeneration, Qwen2VLProcessor
             MODEL_CLS = Qwen2VLForConditionalGeneration
