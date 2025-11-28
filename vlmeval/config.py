@@ -2080,8 +2080,227 @@ model_groups = [
     lfm2vl_series, rbdashmm_api_series_lmdeploy, interns1_series, insight_v_series
 ]
 
+zoe_api_model = {
+    "gpt-4o-2024-11-20_proxy": partial(
+        GPT4VProxy,
+        model="gpt-4o-2024-11-20",
+        temperature=0,
+        img_size=-1,
+        img_detail="high",
+        retry=10,
+        verbose=False,
+    ),  
+    "gpt-5-2025-08-07_proxy": partial(
+        GPT5VProxy,
+        model="gpt-5-2025-08-07",
+        temperature=0,
+        img_size=-1,
+        img_detail="high",
+        retry=5,
+        verbose=True,
+    ),
+    # Grok4
+    "grok-4-0709_proxy": partial(
+        GPT4V,
+        model="grok-4-0709",
+        api_base="https://genaiapi.cloudsway.net/v1/ai/hYFoNhEUtIatHJSP/chat/completions",
+        temperature=0,
+        retry=3,
+        timeout=60, 
+        max_tokens=2048,
+        verbose=True,
+    ),
+    # Gemini xiaosu
+    "GeminiPro2_5_proxy": partial(
+        GPT4V,
+        model="gemini-2.5-pro",
+        api_base="https://genaiapi.cloudsway.net/v1/ai/GfvzGoPlhtUvGjAh/chat/completions",
+        temperature=0,
+        retry=3,
+        timeout=1100, 
+        max_tokens=2048,
+        verbose=True,
+    ),
+    
+    "gemini-3-pro-preview": partial(
+        GPT4V,
+        model="gemini-3-pro-preview",
+        api_base="https://api.ppchat.vip/v1beta/models/gemini-3-pro-preview:generateContent",
+        temperature=0,
+        retry=3,
+        timeout=1100, 
+        max_tokens=2048,
+        verbose=True,
+    ),
+    
+    "Seed1.6_proxy": partial(
+        DoubaoVLProxy, 
+        model="doubao-seed-1.6-250615", 
+        temperature=0,
+        retry=3, 
+        verbose=True, 
+        max_tokens=16384,
+    ),
+}
+
+Bagel_ROOT = None
+zoe_ddp_models = {
+    # bagel
+    "BAGEL-7B-MoT_DDP": partial(Bagel_SingleCard, model_path='ByteDance-Seed/BAGEL-7B-MoT', root=Bagel_ROOT, variant='origin'),
+    "BAGEL-7B-MoT_VGGT_DDP": partial(Bagel_SingleCard, model_path='ByteDance-Seed/BAGEL-7B-MoT', root=Bagel_ROOT, variant='vggt'),
+    
+    # qwen25
+    "Qwen2.5-VL-3B-Instruct_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="Qwen/Qwen2.5-VL-3B-Instruct",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "Qwen2.5-VL-7B-Instruct_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="Qwen/Qwen2.5-VL-7B-Instruct",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "MindCube-Qwen2.5VL-RawQA-SFT_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="MLL-Lab/MindCube-Qwen2.5VL-RawQA-SFT",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "MindCube-Qwen2.5VL-Aug-CGMap-FFR-Out-SFT_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="MLL-Lab/MindCube-Qwen2.5VL-Aug-CGMap-FFR-Out-SFT",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "MindCube-Qwen2.5VL-Plain-CGMap-FFR-Out-SFT_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="MLL-Lab/MindCube-Qwen2.5VL-Plain-CGMap-FFR-Out-SFT",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "SpatialLadder-3B_qwen25_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="hongxingli/SpatialLadder-3B",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "SpaceR-SFT-7B_qwen25_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="RUBBISHLIKE/SpaceR-SFT-7B",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "ViLaSR_qwen25_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="inclusionAI/ViLaSR",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "VST-3B-SFT_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="rayruiyang/VST-3B-SFT",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    "VST-7B-SFT_DDP": partial(
+        Qwen2VLChat_SingleCard,
+        model_path="rayruiyang/VST-7B-SFT",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        use_custom_prompt=False,
+    ),
+    
+    # qwen3
+    "Qwen3-VL-2B-Instruct_DDP": partial(
+        Qwen3VLChat_SingleCard,
+        model_path="Qwen/Qwen3-VL-2B-Instruct",
+        use_custom_prompt=False,
+        use_vllm=False,
+        temperature=0.7, 
+        max_new_tokens=2048,
+    ),    
+    "Qwen3-VL-4B-Instruct_DDP": partial(
+        Qwen3VLChat_SingleCard,
+        model_path="Qwen/Qwen3-VL-4B-Instruct",
+        use_custom_prompt=False,
+        use_vllm=False,
+        temperature=0.7, 
+        max_new_tokens=2048,
+    ),
+    "Qwen3-VL-8B-Instruct_DDP": partial(
+        Qwen3VLChat_SingleCard,
+        model_path="Qwen/Qwen3-VL-8B-Instruct",
+        use_custom_prompt=False,
+        use_vllm=False,
+        temperature=0.7, 
+        max_new_tokens=2048,
+    ),
+    "Qwen3-VL-8B-Thinking_DDP": partial(
+        Qwen3VLChat_SingleCard,
+        model_path="Qwen/Qwen3-VL-8B-Thinking",
+        use_custom_prompt=False,
+        temperature=0.7, 
+        max_new_tokens=16384
+    ),
+    
+    # internvl
+    "InternVL3-8B_DDP": partial(
+        InternVLChat_SingleCard, 
+        model_path="OpenGVLab/InternVL3-8B", 
+        use_custom_prompt=False,
+        version="V2.0",
+    ),
+    "InternVL3-2B_DDP": partial(
+        InternVLChat_SingleCard, 
+        model_path="OpenGVLab/InternVL3-2B", 
+        use_custom_prompt=False,
+        version="V2.0",
+    ),
+    "SenseNova-SI-InternVL3-2B_DDP": partial(
+        InternVLChat_SingleCard, 
+        model_path="sensenova/SenseNova-SI-InternVL3-2B", 
+        use_custom_prompt=False,
+        version="V2.0",
+    ),
+    "SenseNova-SI-InternVL3-8B_DDP": partial(
+        InternVLChat_SingleCard, 
+        model_path="sensenova/SenseNova-SI-InternVL3-8B", 
+        use_custom_prompt=False,
+        version="V2.0",
+    ),
+    "SenseNova-SI-1.1-InternVL3-2B": partial(
+        InternVLChat, 
+        model_path="sensenova/SenseNova-SI-1.1-InternVL3-2B", 
+        use_custom_prompt=False,
+        version="V2.0"
+    ),
+    "SenseNova-SI-1.1-InternVL3-8B": partial(
+        InternVLChat, 
+        model_path="sensenova/SenseNova-SI-1.1-InternVL3-8B", 
+        use_custom_prompt=False,
+        version="V2.0"
+    ),
+    "InternVL3_5-8B_DDP": partial(
+        InternVLChat_SingleCard, 
+        model_path="OpenGVLab/InternVL3_5-8B", 
+        use_custom_prompt=False,
+        version="V2.0"
+    ),
+}
+
 # add by EASI team 
-model_groups.extend([bagel_series, spatial_related_models, sensenova_si_series])
+model_groups.extend([bagel_series, spatial_related_models, sensenova_si_series, zoe_ddp_models, zoe_api_model])
 
 for grp in model_groups:
     supported_VLM.update(grp)
