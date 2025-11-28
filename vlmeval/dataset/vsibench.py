@@ -13,6 +13,7 @@ from .video_base import VideoBaseDataset
 from huggingface_hub import snapshot_download
 from collections import OrderedDict
 
+# ruisi prompt
 RUISI_POST_PROMPT = (
     "Enclose your thinking process in <think> </think> tags and your final answer in <answer> </answer>."
 )

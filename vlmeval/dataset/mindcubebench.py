@@ -116,24 +116,7 @@ class MindCubeBench(ImageMCQDataset):
 
         return data
 
-    # def build_prompt(self, line):
-    #     if isinstance(line, int):
-    #         line = self.data.iloc[line]
-
-    #     if self.meta_only:
-    #         tgt_path = toliststr(line['image_path'])
-    #     else:
-    #         tgt_path = self.dump_image(line)
-
-    #     # # Raw QA prompt format use in paper
-    #     prompt = line['input_prompt']
-
-    #     msgs = self.build_msgs(tgt_path, prompt)
-    #     return msgs
-
     def build_prompt(self, line):
-        use_ruisi_prompt = getenv_bool("use_ruisi_prompt", False)
-
         if isinstance(line, int):
             line = self.data.iloc[line]
 
@@ -143,15 +126,9 @@ class MindCubeBench(ImageMCQDataset):
             tgt_path = self.dump_image(line)
 
         # # Raw QA prompt format use in paper
-        if not use_ruisi_prompt:
-            prompt = line['input_prompt']
-        else:
-            question = line['question']
-            prompt = question + "\n" + RUISI_POST_PROMPT
+        prompt = line['input_prompt']
 
         msgs = self.build_msgs(tgt_path, prompt)
-        # print(f"msgs:{msgs}")
-
         return msgs
 
     @staticmethod
@@ -159,8 +136,6 @@ class MindCubeBench(ImageMCQDataset):
         """
         Interlaced text and pictures
         """
-        peter_test = getenv_bool("peter_test", False)
-
         images = tgt_path if isinstance(tgt_path, list) else [tgt_path]
 
         parts = prompt.split('<image>')
@@ -171,10 +146,7 @@ class MindCubeBench(ImageMCQDataset):
             if part:
                 segs.append(dict(type='text', value=part))
             if (i != len(parts) - 1) and (i < len(images)):
-                if peter_test:
-                    pass
-                else:
-                    segs.append(dict(type='image', value=images[i]))
+                segs.append(dict(type='image', value=images[i]))
 
         return [s for s in segs if s['value']]
 

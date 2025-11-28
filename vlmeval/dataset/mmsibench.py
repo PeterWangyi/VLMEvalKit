@@ -3,8 +3,13 @@ import string
 import pandas as pd
 
 from .image_mcq import ImageMCQDataset
-from ..smp.file import load
+from ..smp.file import load, getenv_bool
 from ..smp.misc import toliststr
+
+
+RUISI_POST_PROMPT = (
+    "Enclose your thinking process in <think> </think> tags and your final answer in <answer> </answer>."
+)
 
 
 class MMSIBench(ImageMCQDataset):

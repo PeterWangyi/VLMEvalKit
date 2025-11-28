@@ -13,9 +13,14 @@ from collections import OrderedDict
 from huggingface_hub import snapshot_download
 
 from ..smp.misc import toliststr, get_cache_path, modelscope_flag_set
-from ..smp.file import LMUDataRoot, dump, load
+from ..smp.file import LMUDataRoot, dump, load, getenv_bool
 from .video_base import VideoBaseDataset
 from .image_mcq import ImageMCQDataset
+
+
+RUISI_POST_PROMPT = (
+    "Enclose your thinking process in <think> </think> tags and your final answer in <answer> </answer>."
+)
 
 
 class SiteBenchBase:
