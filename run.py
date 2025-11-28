@@ -4,6 +4,70 @@ import subprocess
 from functools import partial
 
 
+import random
+import numpy as np
+import torch
+from functools import partial
+from vlmeval.smp import load
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+# def set_seed_site():
+#     # seed = 42
+#     random.seed(0)
+#     np.random.seed(1234)
+#     torch.manual_seed(1234)
+#     # if torch.cuda.is_available():
+#     #     torch.cuda.manual_seed(1234)
+#     #     torch.cuda.manual_seed_all(1234)
+#     # torch.backends.cudnn.deterministic = True
+#     # torch.backends.cudnn.benchmark = False
+
+
+# def set_seed_mmsi():
+#     # seed = 42
+#     # random.seed(0)
+#     # np.random.seed(1234)
+#     torch.manual_seed(1234)
+#     # if torch.cuda.is_available():
+#     #     torch.cuda.manual_seed(1234)
+#     #     torch.cuda.manual_seed_all(1234)
+#     # torch.backends.cudnn.deterministic = True
+#     # torch.backends.cudnn.benchmark = False
+
+# def set_seed_vsi():
+#     # seed = 42
+#     random.seed(0)
+#     np.random.seed(1234)
+#     torch.manual_seed(1234)
+#     # if torch.cuda.is_available():
+#     #     torch.cuda.manual_seed(1234)
+#     #     torch.cuda.manual_seed_all(1234)
+#     # torch.backends.cudnn.deterministic = True
+#     # torch.backends.cudnn.benchmark = False
+
+
+# peter_test = getenv_bool("peter_test", False)
+
+# if peter_test:
+#     set_seed_site()
+#     # set_seed_mmsi()
+#     # set_seed_vsi()
+
+# else:
+set_seed(seed=42)
+
+
 # GET the number of GPUs on the node without importing libs like torch
 def get_gpu_list():
     CUDA_VISIBLE_DEVICES = os.environ.get('CUDA_VISIBLE_DEVICES', '')
@@ -18,10 +82,12 @@ def get_gpu_list():
         return []
 
 
-RANK = int(os.environ.get('RANK', 0))
-WORLD_SIZE = int(os.environ.get('WORLD_SIZE', 1))
-LOCAL_WORLD_SIZE = int(os.environ.get("LOCAL_WORLD_SIZE",1))
-LOCAL_RANK = int(os.environ.get("LOCAL_RANK",1))
+# RANK = int(os.environ.get('RANK', 0))
+RANK = int(0)
+# WORLD_SIZE = int(os.environ.get('WORLD_SIZE', 1))
+WORLD_SIZE = int(1)
+LOCAL_WORLD_SIZE = int(os.environ.get("LOCAL_WORLD_SIZE", 1))
+LOCAL_RANK = int(os.environ.get("LOCAL_RANK", 0))
 
 GPU_LIST = get_gpu_list()
 if LOCAL_WORLD_SIZE > 1 and len(GPU_LIST):
@@ -38,6 +104,11 @@ if LOCAL_WORLD_SIZE > 1 and len(GPU_LIST):
         f'LOCAL_WORLD_SIZE: {LOCAL_WORLD_SIZE}, CUDA_VISIBLE_DEVICES: {CUDA_VISIBLE_DEVICES}'
     )
 
+
+print(
+    f'RANK: {RANK}, LOCAL_RANK: {LOCAL_RANK}, WORLD_SIZE: {WORLD_SIZE},'
+    f'LOCAL_WORLD_SIZE: {LOCAL_WORLD_SIZE}'
+)
 
 from vlmeval.config import supported_VLM
 from vlmeval.dataset.video_dataset_config import supported_video_datasets
@@ -178,7 +249,7 @@ You can launch the evaluation by setting either --data and --model or --config.
     # Infer + Eval or Infer Only
     parser.add_argument('--mode', type=str, default='all', choices=['all', 'infer', 'eval'])
     # API Kwargs, Apply to API VLMs and Judge API LLMs
-    parser.add_argument('--api-nproc', type=int, default=4, help='Parallel API calling')
+    parser.add_argument('--api-nproc', type=int, default=12, help='Parallel API calling')
     parser.add_argument('--retry', type=int, default=None, help='retry numbers for API VLMs')
     parser.add_argument('--judge-args', type=str, default=None, help='Judge arguments in JSON format')
     # Explicitly Set the Judge Model
@@ -402,6 +473,8 @@ def main():
                         judge_kwargs['model'] = 'gpt-4.1'
                     elif listinstr(['MathCanvas'], dataset_name):
                         judge_kwargs['model'] = 'gpt-4.1-2025-04-14'
+
+                    judge_kwargs['model'] = 'gpt-4o-2024-11-20_proxy'
 
                 if args.use_verifier:
                     judge_kwargs['use_verifier'] = True

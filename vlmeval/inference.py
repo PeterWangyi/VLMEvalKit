@@ -3,9 +3,25 @@ import torch.distributed as dist
 from vlmeval.config import supported_VLM
 from vlmeval.utils import track_progress_rich
 from vlmeval.smp import *
+from vlmeval.dataset import DATASET_TYPE
+
+import os, warnings
+import torch
+import multiprocessing as mp
+import queue as py_queue  # for Empty
+import time
+
+from tqdm import tqdm
 
 FAIL_MSG = 'Failed to obtain answer via API.'
+FAIL_MSGS = [
+    'Failed to obtain answer via API.',
+    '[ERROR]',
+    'Hit max new token.',
+    'Failed'
+]
 
+logger = get_logger(name='test')
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -62,7 +78,8 @@ def infer_data_api(model, work_dir, model_name, dataset, index_set=None, api_npr
     if osp.exists(out_file):
         res = load(out_file)
         if ignore_failed:
-            res = {k: v for k, v in res.items() if FAIL_MSG not in v}
+            res = {k: v for k, v in res.items()
+                    if not any(msg in str(v) for msg in FAIL_MSGS)}
 
     structs = [s for i, s in zip(indices, structs) if i not in res]
     indices = [i for i in indices if i not in res]
@@ -149,9 +166,19 @@ def infer_data(model, model_name, work_dir, dataset, out_file, verbose=False, ap
         if idx in res:
             continue
 
+        # print("hasattr:", hasattr(model, "use_custom_prompt"))
+        # print("dataset_name:", dataset_name)
+        # print("dataset_type:", DATASET_TYPE(dataset_name, default=None))
+        # print("use_custom_prompt:", model.use_custom_prompt(dataset_name))
+
         if hasattr(model, 'use_custom_prompt') and model.use_custom_prompt(dataset_name):
+
+            print(111)
+
             struct = model.build_prompt(data.iloc[i], dataset=dataset_name)
         else:
+            print(222)
+
             struct = dataset.build_prompt(data.iloc[i])
 
         # If `SKIP_ERR` flag is set, the model will skip the generation if error is encountered
@@ -195,7 +222,11 @@ def infer_data_job(
             # breakpoint()
             results = {k: v for k, v in zip(data['index'], data['prediction'])}
             if not ignore_failed:
-                results = {k: v for k, v in results.items() if FAIL_MSG not in str(v)}
+                # results = {k: v for k, v in results.items() if FAIL_MSG not in str(v)}
+
+                results = {k: v for k, v in results.items()
+                    if not any(msg in str(v) for msg in FAIL_MSGS)}
+
             dump(results, prev_file)
         if world_size > 1:
             dist.barrier()
@@ -203,9 +234,26 @@ def infer_data_job(
     tmpl = osp.join(work_dir, '{}' + f'{world_size}_{dataset_name}.pkl')
     out_file = tmpl.format(rank)
 
-    model = infer_data(
-        model=model, work_dir=work_dir, model_name=model_name, dataset=dataset,
-        out_file=out_file, verbose=verbose, api_nproc=api_nproc, use_vllm=use_vllm)
+    print(f"tmpl path : {out_file}")
+    replicas_per_device = int(os.environ.get('replicas_per_device', 1))
+
+    if 'ddp' in model_name.lower() or 'single' in model_name.lower():
+        model = infer_data_unified(
+            model=model_name,                # 字符串 key，来自 supported_VLM
+            model_name=model_name,
+            work_dir=work_dir,
+            dataset=dataset,
+            out_file=out_file,
+            devices=list(range(torch.cuda.device_count())),
+            replicas_per_device=replicas_per_device,           # 想要每卡放几个就写几
+            worker_multiplier=4,             # 每副本 in-flight 任务个数系数，2~4 之间调
+            verbose=verbose
+        )
+    else:
+        model = infer_data(
+            model=model, work_dir=work_dir, model_name=model_name, dataset=dataset,
+            out_file=out_file, verbose=verbose, api_nproc=api_nproc, use_vllm=use_vllm)
+
     if world_size > 1:
         dist.barrier()
 
@@ -250,3 +298,208 @@ def infer_data_job(
     if world_size > 1:
         dist.barrier()
     return model
+
+
+
+def make_registry_builder(model_name: str, extra_kwargs: dict):
+    ctor = supported_VLM[model_name]
+    def _builder(*, device_id=None, force_single_device=True, **kw):
+        merged = {**extra_kwargs, **kw}
+        return ctor(device_id=device_id, force_single_device=force_single_device, **merged)
+    return _builder
+
+
+def _worker_loop(device_id, replica_id, in_q, out_q, model_name: str, extra_kwargs: dict):
+    import os, sys, warnings, traceback
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    for k in ("RANK", "LOCAL_RANK", "WORLD_SIZE"):
+        os.environ.pop(k, None)
+
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if pkg_root not in sys.path:
+        sys.path.insert(0, pkg_root)
+
+    import torch
+
+    kw = dict(extra_kwargs or {})
+    kw["force_single_device"] = True
+    kw["device_id"] = device_id
+    kw["replica_id"] = replica_id
+
+    builder = make_registry_builder(model_name, {})
+
+    model = None
+    try:
+        model = builder(**kw)
+    except Exception as e:
+        warnings.warn(f"[worker {device_id}-{replica_id}] model init failed: {type(e)} {e}")
+
+    while True:
+        item = in_q.get()
+
+        if item is None:
+            break
+
+        idx, struct, dataset_name = item
+        try:
+            if model is None:
+                resp = f'Failed: model_init_failed on worker {device_id}-{replica_id}'
+            else:
+                resp = model.generate(message=struct, dataset=dataset_name)
+        except RuntimeError as err:
+            if torch.cuda.is_available():
+                try:
+                    torch.cuda.synchronize()
+                except Exception:
+                    pass
+            warnings.warn(f'{type(err)} {str(err)}')
+            resp = f'Failed: {type(err)} {str(err)}'
+        except Exception as err:
+            resp = f'Failed: {type(err)} {str(err)} | {traceback.format_exc(limit=1)}'
+
+        out_q.put((idx, resp))
+        logger.info(f"--- queue put response: {str(resp)[:1000]}")
+
+
+def infer_data_unified(
+    model, model_name, work_dir, dataset, out_file,
+    verbose=False, api_nproc=4, use_vllm=False,
+    devices=None, replicas_per_device=None, worker_multiplier=4
+):
+    dataset_name = dataset.dataset_name
+    prev_file = f'{work_dir}/{model_name}_{dataset_name}_PREV.pkl'
+    res = load(prev_file) if os.path.exists(prev_file) else {}
+    if os.path.exists(out_file):
+        res.update(load(out_file))
+
+    rank, world_size = get_rank_and_world_size()
+    sheet_indices = list(range(rank, len(dataset), world_size))
+    data = dataset.data.iloc[sheet_indices]
+    data_indices = [i for i in data['index']]
+
+    # 已完成直接写回
+    if all(idx in res for idx in data_indices):
+        dump({k: res[k] for k in data_indices}, out_file)
+        return model
+
+    data = data[~data['index'].isin(res)]
+    lt = len(data)
+    if lt == 0:
+        dump({k: res[k] for k in data_indices}, out_file)
+        return model
+
+    extra_kwargs = {}
+    if model_name and any(k in model_name for k in ['Llama-4','Qwen2-VL','Qwen2.5-VL']):
+        extra_kwargs['use_vllm'] = use_vllm
+
+    # 规避 TP
+    ws_bak = os.environ.pop('WORLD_SIZE', None)
+
+    # ========== 仅在“模型名为字符串”的情况下，使用多进程多卡调度 ==========
+    if isinstance(model, str):
+        if devices is None:
+            devices = list(range(torch.cuda.device_count()))
+        assert len(devices) >= 1, "No CUDA devices found."
+
+        # 队列与进程（每卡一个进程）
+        replicas = replicas_per_device or 1  # ← 新增：每卡开多少份
+        ctx = mp.get_context("spawn")
+        inqs, procs = [], []
+        outq = ctx.Queue(maxsize=int(len(data_indices) * 2))
+        # outq = ctx.SimpleQueue()
+
+        for did in devices:
+            for r in range(replicas):
+                # iq = ctx.SimpleQueue()
+                iq = ctx.Queue(maxsize=int(len(data_indices)))
+                p = ctx.Process(
+                    target=_worker_loop,
+                    args=(did, r, iq, outq, model_name, extra_kwargs)
+                    # 不要 daemon=True
+                )
+                p.start()
+                inqs.append(iq)
+                procs.append(p)
+
+        # ===== 先预构建 prompts =====
+        tasks = []
+        for i in tqdm(range(lt), desc="Building prompt..."):
+            row = data.iloc[i]
+            idx = row['index']
+            if idx in res:
+                continue
+            struct = (dataset.build_prompt(row)
+                    if hasattr(dataset, 'build_prompt') else row['question'])
+            tasks.append((idx, struct, dataset_name))
+
+        want = len(tasks)
+        print(f"-----------------------Build prompt done! want={want} ---------------------------", flush=True)
+        logger.info(f"----------------------------------Build prompt done! want={want}-----------------------, procs={len(procs)}")
+        assert want > 0, "No tasks submitted to workers on this rank."
+
+        # ===== 再分发任务 =====
+        rr = 0
+        for item in tasks:
+            inqs[rr % len(inqs)].put(item)
+            rr += 1
+
+        print(f" ---------------- split mission -----------------------")
+
+        # 关闭输入队列
+        for iq in inqs:
+            iq.put(None)
+
+        print(f" ---------------- closed queue -----------------------")
+
+        # 收集结果（带 timeout，避免永久卡死）
+        completed = 0
+        DUMP_EVERY = 10
+        DUMP_EVERY_SEC = 180
+        last_dump_t = time.time()
+
+        time.sleep(60 * 2)
+
+        # 收集结果
+        try:
+            while completed < want:
+                try:
+                    # logger.info(f"Start to get...")
+                    idx, response = outq.get(timeout=30.0)
+                    # logger.info(f"Success get!!!")
+                except py_queue.Empty:
+                    # 心跳：看看子进程还活着吗
+                    alive = sum(p.is_alive() for p in procs)
+                    logger.info(f"[collector] still waiting... completed={completed}/{want}, alive_procs={alive}")
+                    # 如果全部死光了但还没凑够 want，说明前面哪里出问题了，跳出或 raise
+                    if alive == 0:
+                        raise RuntimeError(f"All workers exited early: completed={completed}, want={want}")
+                    continue
+
+                res[idx] = response
+                logger.info(f"--- queue get response idx: {idx} {str(response)[:2000]}")  # 截断避免日志太长
+                completed += 1
+
+                if (completed % DUMP_EVERY == 0) or (time.time() - last_dump_t >= DUMP_EVERY_SEC):
+                    dump({k: res[k] for k in data_indices if k in res}, out_file)
+                    last_dump_t = time.time()
+                    if verbose:
+                        logger.info(f"📀 checkpoint saved at {completed}/{want}")
+
+        except Exception as e:
+            logger.exception(f"[collector] fatal: {e}")
+            dump({k: res[k] for k in data_indices if k in res}, out_file)
+            raise
+        finally:
+            dump({k: res[k] for k in data_indices if k in res}, out_file)
+
+
+        dump({k: res[k] for k in data_indices if k in res}, out_file)
+
+        if ws_bak:
+            os.environ['WORLD_SIZE'] = ws_bak
+
+        for p in procs:
+            p.join(timeout=0.2)
+
+        return model

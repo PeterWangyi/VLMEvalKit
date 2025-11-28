@@ -127,6 +127,17 @@ class ViewSpatialBench(ImageMCQDataset):
 
         prompt = question_text + choices_text + post_prompt
 
+        ladder_test = getenv_bool("ladder_test", False)
+        print(f"ladder test: {ladder_test}")
+        if ladder_test:
+            print(f"---------------ladder test: {ladder_test}---------------------")
+            question_text = f"Question: {question}\n"
+            choices_text = f"Options: {choices}\n"
+            post_prompt = "Please answer with the option's letter from the given choices directly."
+
+            prompt = ''
+            prompt = question_text + choices_text + post_prompt
+
         msgs = []
         if isinstance(tgt_path, list):
             msgs.extend([dict(type='image', value=p) for p in tgt_path])

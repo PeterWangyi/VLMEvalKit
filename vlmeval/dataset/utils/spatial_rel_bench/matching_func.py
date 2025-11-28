@@ -163,6 +163,13 @@ def _first_number(s: str):
     return float(m.group()) if m else None
 
 
+def _last_number(s: str):
+    nums = re.findall(_NUM_RE, s)
+    if nums:
+        return float(nums[-1])
+    return None
+
+
 def can_match_na(pred):
     try:
         if isinstance(pred, list):
@@ -184,14 +191,19 @@ def can_match_na(pred):
                 except Exception:
                     pass
 
-            # after </think>
-            tail = _after_think(text)
-            v = _first_number(tail)
-            if v is not None:
-                return v
+            # # after </think>
+            # tail = _after_think(text)
+            # v = _first_number(tail)
+            # if v is not None:
+            #     return v
 
-            # first number
-            v = _first_number(text)
+            # # first number
+            # v = _first_number(text)
+            # if v is not None:
+            #     return v
+
+            # >>> NEW: fallback to last number <<<
+            v = _last_number(text)
             if v is not None:
                 return v
 

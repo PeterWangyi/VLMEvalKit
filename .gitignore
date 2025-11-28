@@ -210,3 +210,14 @@ GLM4.5*
 SenseNova*
 
 .DS_Store
+zoe_eval/*
+vlmeval/utils/unified_cal_score/comp_models.py
+vlmeval/utils/unified_cal_score/compare_models.xlsx
+vlmeval/utils/unified_cal_score/gen_score_merged.py
+vlmeval/utils/unified_cal_score/hard_circular.py
+vlmeval/utils/unified_cal_score/single_file.py
+vlmeval/utils/unified_cal_score/bench/all_site.py
+vlmeval/utils/unified_cal_score/bench/read_all_tsv.py
+vlmeval/utils/unified_cal_score/utils/__init__.py
+vlmeval/utils/unified_cal_score/utils/matching_func.py
+vlmeval/utils/unified_cal_score/utils/tools.py

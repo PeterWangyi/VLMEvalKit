@@ -23,6 +23,7 @@ from .kimivl_api import KimiVLAPIWrapper, KimiVLAPI
 from .rbdashmm_chat3_api import RBdashMMChat3_API, RBdashChat3_5_API
 
 from .gpt_proxy_api import OpenAIProxyWrapper, GPT4VProxy, GPT5VProxy
+from .doubao_vl_proxy_api import DoubaoVLProxyWrapper, DoubaoVLProxy
 
 __all__ = [
     'OpenAIWrapper', 'HFChatModel', 'GeminiWrapper', 'GPT4V', 'Gemini',
@@ -36,5 +37,5 @@ __all__ = [
 
 # Zoe apis
 __all__ += [
-    'OpenAIProxyWrapper', 'GPT4VProxy', 'GPT5VProxy'
+    'OpenAIProxyWrapper', 'GPT4VProxy', 'GPT5VProxy', 'DoubaoVLProxy', 'DoubaoVLProxyWrapper'
 ]

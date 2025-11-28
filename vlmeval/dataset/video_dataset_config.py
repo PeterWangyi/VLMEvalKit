@@ -183,9 +183,12 @@ video_vsi_dataset = {}
 
 vsi_variants = VsiBench.supported_datasets()
 vsi_kwargs = [
+    {"nframe": 128, "suffix": "128frame"},
     {"nframe": 64, "suffix": "64frame"},
     {"nframe": 32, "suffix": "32frame"},
+    {"nframe": 16, "suffix": "16frame"},
     {"fps": 1.0, "suffix": "1fps"},
+    {"fps": 2.0, "suffix": "2fps"},
 ]
 
 for variant in vsi_variants:
@@ -197,6 +200,7 @@ for variant in vsi_variants:
 sitebenchvideo_dataset = {
     'SiteBenchVideo_64frame': partial(SiteBenchVideo, dataset='SiteBenchVideo', nframe=64),
     'SiteBenchVideo_32frame': partial(SiteBenchVideo, dataset='SiteBenchVideo', nframe=32),
+    'SiteBenchVideo_16frame': partial(SiteBenchVideo, dataset='SiteBenchVideo', nframe=16),
     'SiteBenchVideo_1fps': partial(SiteBenchVideo, dataset='SiteBenchVideo', fps=1),
 }
 

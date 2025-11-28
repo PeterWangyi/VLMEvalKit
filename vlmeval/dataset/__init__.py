@@ -95,6 +95,10 @@ from .embspatialbench import EmbSpatialBench
 from .viewspatialbench import ViewSpatialBench
 from .mmsibench import MMSIBench
 from .sitebench import SiteBenchImage
+from .sparbench import SparBench
+from .spatialviz_bench import SpatialVizBench
+from .starebench import StareBench
+from .omnispatialbench import OmniSpatialBench
 
 from .reasonmap_plus import ReasonMap_Plus
 
@@ -227,7 +231,8 @@ IMAGE_DATASET = [
     AyaVisionBench, TopViewRS, VLMBias, MMHELIX, MedqbenchMCQDataset, MathCanvas,
     MedqbenchPairedDescriptionDataset, MedqbenchCaptionDataset, ChartMuseum, ChartQAPro, ReasonMap_Plus,
     olmOCRBench, OceanOCRBench, MATBench, VLRMBench,
-    MindCubeBench, EmbSpatialBench, ViewSpatialBench, MMSIBench, SiteBenchImage
+    MindCubeBench, EmbSpatialBench, ViewSpatialBench, MMSIBench, SiteBenchImage,
+    SparBench, SpatialVizBench, OmniSpatialBench, StareBench
 ]
 
 VIDEO_DATASET = [
@@ -240,6 +245,7 @@ VIDEO_DATASET = [
     Video_MMLU_CAP, Video_MMLU_QA,
     Video_Holmes, VCRBench, CGAVCounting,
     EgoExoBench_MCQ,
+    SiteBenchVideo, VsiBench,
 ]
 
 TEXT_DATASET = [

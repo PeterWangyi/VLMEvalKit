@@ -76,13 +76,22 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
         self.temperature = temperature
         if self.total_pixels and self.total_pixels > 24576 * 32 * 32:
             print('The total number of video tokens might too large, resulting in an overly long input sequence.')
+        # self.generate_kwargs = dict(
+        #     max_new_tokens=self.max_new_tokens,
+        #     top_p=top_p,
+        #     top_k=top_k,
+        #     temperature=temperature,
+        #     repetition_penalty=repetition_penalty,
+        # )
+
         self.generate_kwargs = dict(
-            max_new_tokens=self.max_new_tokens,
-            top_p=top_p,
-            top_k=top_k,
-            temperature=temperature,
-            repetition_penalty=repetition_penalty,
+            max_new_tokens=2048,
+            top_p=1.0,
+            temperature=0.0,
+            do_sample=False,
+            num_beams=1
         )
+
         self.system_prompt = system_prompt
         self.verbose = verbose
         self.post_process = post_process
@@ -214,6 +223,9 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             return_video_metadata=True,
         )
 
+        # print(f"image size: {images.shape() if images is not None else None}")
+        # print(f"video size: {videos.shape() if videos is not None else None}")
+
         video_metadatas = None
         if videos is not None:
             videos, video_metadatas = zip(*videos)
@@ -339,3 +351,212 @@ class Qwen3VLChat(Qwen3VLPromptMixin, BaseModel):
             return self.generate_inner_vllm(message, dataset=dataset)
         else:
             return self.generate_inner_transformers(message, dataset=dataset)
+
+
+class Qwen3VLChat_SingleCard(Qwen3VLChat):
+
+    INSTALL_REQ = False
+    INTERLEAVE = True
+    VIDEO_LLM = True
+
+    def __init__(
+        self,
+        model_path: str,
+        min_pixels: int | None = None,
+        max_pixels: int | None = None,
+        total_pixels: int | None = None,
+        max_new_tokens: int = 32768,
+        top_p: float = 0.8,
+        top_k: int = 20,
+        temperature: float = 0.01,
+        repetition_penalty: float = 1.0,
+        use_custom_prompt: bool = True,
+        system_prompt: str | None = None,
+        post_process: bool = False,
+        verbose: bool = False,
+        device_id: int = 0,
+        force_single_device: bool = True,
+        **kwargs,
+    ) -> None:
+        import torch, logging, warnings, os
+        try:
+            torch.cuda.set_device(device_id)
+        except Exception as e:
+            warnings.warn(f"set_device({device_id}) 失败：{e}，将继续尝试显式 device_map 绑定。")
+
+        # 2) 保存你要的设备字符串，后面统一用
+        self.device = f"cuda:{device_id}"
+        self.force_single_device = force_single_device
+        print(f" Qwen3 single card device: {self.device}")
+
+        Qwen3VLPromptMixin.__init__(self, use_custom_prompt=use_custom_prompt)
+        self.min_pixels = min_pixels
+        self.max_pixels = max_pixels
+        self.total_pixels = total_pixels
+        self.max_new_tokens = max_new_tokens
+        self.top_k = top_k
+        self.top_p = top_p
+        self.repetition_penalty = repetition_penalty
+        self.presence_penalty = 1.5
+        self.temperature = temperature
+        if self.total_pixels and self.total_pixels > 24576 * 32 * 32:
+            print('The total number of video tokens might too large, resulting in an overly long input sequence.')
+
+        # self.generate_kwargs = dict(
+        #     max_new_tokens=self.max_new_tokens,
+        #     top_p=top_p,
+        #     top_k=top_k,
+        #     temperature=temperature,
+        #     repetition_penalty=repetition_penalty,
+        # )
+
+        self.generate_kwargs = dict(
+            max_new_tokens=2048,
+            top_p=1.0,
+            temperature=0.0,
+            do_sample=False,
+            num_beams=1
+        )
+
+        self.system_prompt = system_prompt
+        self.verbose = verbose
+        self.post_process = post_process
+        self.fps = kwargs.pop('fps', 2)
+        self.nframe = kwargs.pop('nframe', 128)
+        self.FRAME_FACTOR = 2
+
+        assert model_path is not None
+        self.model_path = model_path
+
+        user_model_path = os.environ.get('Qwen3_ckpt_path', None)
+        if user_model_path is not None:
+            self.model_path = user_model_path
+
+        print(f"Using Qwen3 ckpt from : {self.model_path}")
+
+        from transformers import AutoProcessor, AutoModelForImageTextToText
+        self.processor = AutoProcessor.from_pretrained(self.model_path)
+
+        gpu_mems = get_gpu_memory()
+        max_gpu_mem = max(gpu_mems) if gpu_mems != [] else -1
+        assert max_gpu_mem > 0
+
+        self.use_vllm = kwargs.get('use_vllm', False)
+        self.limit_mm_per_prompt = VLLM_MAX_IMAGE_INPUT_NUM
+        os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
+        if self.use_vllm:
+            from vllm import LLM
+            gpu_count = torch.cuda.device_count()
+            tp_size = gpu_count if gpu_count > 0 else 1
+            logging.info(
+                f'Using vLLM for {self.model_path} inference with {tp_size} GPUs (available: {gpu_count})'
+            )
+            if os.environ.get('VLLM_WORKER_MULTIPROC_METHOD') != 'spawn':
+                logging.warning(
+                    "VLLM_WORKER_MULTIPROC_METHOD is not set to spawn. Use 'export VLLM_WORKER_MULTIPROC_METHOD=spawn'"
+                )
+            enable_expert_parallel = is_moe_model(self.model_path)
+            self.llm = LLM(
+                model=self.model_path,
+                max_num_seqs=5,
+                max_model_len=self.max_new_tokens,
+                limit_mm_per_prompt={"image": self.limit_mm_per_prompt},
+                tensor_parallel_size=tp_size,
+                mm_encoder_tp_mode="data",
+                enable_expert_parallel=enable_expert_parallel,
+                seed=0,
+                gpu_memory_utilization=kwargs.get("gpu_utils", 0.7),
+            )
+        else:
+            self.model = AutoModelForImageTextToText.from_pretrained(
+                self.model_path,
+                torch_dtype='auto',
+                device_map={"": self.device} if force_single_device else "auto",
+                attn_implementation='flash_attention_2'
+            )
+            self.model.eval()
+
+        torch.cuda.empty_cache()
+
+    def generate_inner_transformers(self, message, dataset=None):
+        try:
+            from qwen_vl_utils import process_vision_info
+        except Exception as err:
+            logging.critical("qwen_vl_utils not found, please install it via 'pip install qwen-vl-utils'")
+            raise err
+
+        messages = []
+        if self.system_prompt is not None:
+            messages.append({'role': 'system', 'content': self.system_prompt})
+        messages.append({'role': 'user', 'content': self._prepare_content(message, dataset=dataset)})
+        if self.verbose:
+            print(f'\033[31m{messages}\033[0m')
+
+        text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        images, videos, video_kwargs = process_vision_info(
+            messages,
+            image_patch_size=16,
+            return_video_kwargs=True,
+            return_video_metadata=True,
+        )
+
+        # print(f"image size: {len(images) if images is not None else None}")
+        # v0 = videos[0]                     # (tensor, meta)
+        # if isinstance(v0, tuple):
+        #     frames, meta = v0              # frames: torch.Tensor, meta: dict
+        # else:
+        #     frames, meta = v0, None
+
+        # print("tensor shape:", tuple(frames.shape))
+        # print("dtype/device:", frames.dtype, frames.device)
+        # if meta:
+        #     print("fps:", meta.get("fps"), "#frames:", len(meta.get("frames_indices", [])))
+
+        video_metadatas = None
+        if videos is not None:
+            videos, video_metadatas = zip(*videos)
+            videos, video_metadatas = list(videos), list(video_metadatas)
+
+        inputs = self.processor(
+            text=text,
+            images=images,
+            videos=videos,
+            video_metadata=video_metadatas,
+            do_resize=False,
+            return_tensors='pt',
+            **(video_kwargs or {}),
+        )
+        inputs = inputs.to(self.device)
+
+        generated_ids = self.model.generate(
+            **inputs,
+            **self.generate_kwargs,
+        )
+        generated_ids = [
+            output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        out = self.processor.tokenizer.batch_decode(
+            generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
+        response = out[0]
+        if self.post_process:
+            resp = response.split('\\boxed{')[-1]
+            lt = len(resp)
+            counter, end = 1, None
+            for i in range(lt):
+                if resp[i] == '{':
+                    counter += 1
+                elif resp[i] == '}':
+                    counter -= 1
+                if counter == 0:
+                    end = i
+                    break
+                elif i == lt - 1:
+                    end = lt
+                    break
+            if end is not None:
+                response = resp[:end]
+
+        if self.verbose:
+            print(f'\033[32m{response}\033[0m')
+        return response

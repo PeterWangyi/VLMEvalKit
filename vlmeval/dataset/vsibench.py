@@ -7,11 +7,58 @@ import math
 import numpy as np
 
 from ..smp import *
-from ..smp.file import load
+from ..smp.file import load, getenv_bool
 from .video_base import VideoBaseDataset
 
 from huggingface_hub import snapshot_download
 from collections import OrderedDict
+
+RUISI_POST_PROMPT = (
+    "Enclose your thinking process in <think> </think> tags and your final answer in <answer> </answer>."
+)
+RUISI_NA_POST_PROMPT = (
+    "Enclose your thinking process in <think> </think> tags and then provide one float number as the final answer in <answer> </answer> tags."
+)
+
+
+AUG_CG_MAP = """
+[Task]
+Your task is to analyze the spatial arrangement of objects in the scene by examining the provided images, which show the scene from different viewpoints. You will then create a detailed cognitive map representing the scene using a 10x10 grid coordinate system.
+[Rules]
+1. Create a cognitive map with the following structure in the bird's view:
+   - A 10x10 grid where [0,0] is at the top-left corner and [9,9] is at the bottom-right corner
+   - up = towards the top of the grid (decreasing y)
+   - right = towards the right of the grid (increasing x)
+   - down = towards the bottom of the grid (increasing y)
+   - left = towards the left of the grid (decreasing x)
+   - inner = straight into the 2D map (perpendicular to the grid, pointing away from you)
+   - outer = straight out of the 2D map (perpendicular to the grid, pointing towards you)
+   - Include positions of all objects from the specified categories
+   - Estimate the center location (coordinates [x, y]) of each instance within provided categories
+   - If a category contains multiple instances, include all of them
+   - Each object's estimated location should accurately reflect its real position in the scene, preserving the relative spatial relationships among all objects
+   - Combine and merge information from the images since they are pointing to the same scene, calibrating the object locations accordingly
+   - Include camera positions and directions for each view
+3. Carefully integrate information from all views to create a single coherent spatial representation.
+[Answer Instruction]
+1. Given the provided views and main objects mentioned in the above rules, you **MUST** present your cognitive map in the following JSON format **before your reasoning**:
+```json
+{
+  "objects": [
+    {"name": "object_name", "position": [x, y], "facing": "direction"},
+    {"name": "object_without_orientation", "position": [x, y]}
+  ],
+  "views": [
+    {"name": "View 1", "position": [x, y], "facing": "direction"},
+    {"name": "View 2", "position": [x, y], "facing": "direction"}
+  ]
+}
+```
+2. Next, please also provide your reasons step by step in details, then provide *ONE* correct answer selecting from the options. Your answer field must be in the format like "A. Above"
+3. In general, your response's format should be like "Based on my observation, the answer is:
+<cogmap>(Replace with your cogmap here)</cogmap><think>(Replace with your reasoning here)</think><answer>(Replace with your answer here)</answer>". Your option must be from the available options.
+"""
+
 
 
 class VsiBench(VideoBaseDataset):
@@ -45,7 +92,7 @@ class VsiBench(VideoBaseDataset):
     ORIGIN_VQA_POST_PROMPT = "Answer briefly and directly in one float number."
 
     def __init__(self, dataset, pack=False, nframe=0, fps=-1, sample_strategy='uniform_tail'):
-        super().__init__(dataset='VSI-Bench', pack=pack, nframe=nframe, fps=fps)
+        super().__init__(dataset=dataset, pack=pack, nframe=nframe, fps=fps)
 
         valid_strategies = {'uniform_tail', 'uniform', 'chunk_center'}
         if sample_strategy not in valid_strategies:
@@ -54,20 +101,29 @@ class VsiBench(VideoBaseDataset):
         self.sample_strategy = sample_strategy
         self.variant = self.get_variant(dataset)
         print(f"VsiBench using variant : {self.variant}")
+        self.MODALITY = 'VIDEO'
 
     def get_variant(self, name: str, default="origin"):
         base = "VSI-Bench"
         if not isinstance(name, str) or not name.startswith(base):
             return None
-        suffix = name[len(base):]
-        suffix = suffix.lstrip("_").strip()
-        return suffix or default
+        # 去掉前缀与前导连接符
+        suffix = name[len(base):].lstrip("_-").strip()
+        if not suffix:
+            return default
+        # 只取最后一个段：..._origin 或 ..._standard
+        last = suffix.split("_")[-1].lower()
+        if last in {"origin", "standard"}:
+            return last
+        return default
 
     @classmethod
     def supported_datasets(cls):
         return [
             'VSI-Bench_origin',
-            'VSI-Bench_standard'
+            'VSI-Bench_standard',
+            'VSI-Bench-Debiased_origin',
+            'VSI-Bench-rel-dir_origin',
         ]
 
     def get_task_type(self, question_type):
@@ -110,93 +166,121 @@ class VsiBench(VideoBaseDataset):
                     return False
             return True
 
-        cache_path = get_cache_path(repo_id)
-        if cache_path is not None and check_integrity(cache_path):
-            dataset_path = cache_path
-        else:
-            def unzip_hf_zip(pth):
-                import zipfile
-                base_dir = pth
-                target_dir = os.path.join(pth, 'video/')
-                zip_files = [
-                    os.path.join(base_dir, file) for file in os.listdir(base_dir)
-                    if file.endswith('.zip')
-                ]
-                zip_files.sort()
+        # cache_path = get_cache_path(repo_id)
 
-                if not os.path.exists(target_dir):
-                    os.makedirs(target_dir, exist_ok=True)
-                    for zip_file in zip_files:
-                        with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-                            for member in zip_ref.namelist():
-                                if member.endswith('/'):
-                                    continue
+        # cache_path = '/mnt/aigc/shared_env/huggingface/hub/datasets--nyu-visionx--VSI-Bench/snapshots/bc96b17cb6be84878a6c1f2e64c24346356e0d04'
 
-                                rel = os.path.normpath(member.lstrip("/"))
-                                dst = os.path.join(target_dir, rel)
-                                os.makedirs(os.path.dirname(dst), exist_ok=True)
+        # print(f"hf path : {cache_path}, {check_integrity(cache_path)}")
 
-                                with zip_ref.open(member) as source, open(dst, 'wb') as target:
-                                    target.write(source.read())
-                    print('The video file has been restored and stored from the zip file.')
-                else:
-                    print('The video file already exists.')
+        # if cache_path is not None and check_integrity(cache_path):
+        #     dataset_path = cache_path
+        # else:
+        #     def unzip_hf_zip(pth):
+        #         import zipfile
+        #         base_dir = pth
+        #         target_dir = os.path.join(pth, 'video/')
+        #         zip_files = [
+        #             os.path.join(base_dir, file) for file in os.listdir(base_dir)
+        #             if file.endswith('.zip')
+        #         ]
+        #         zip_files.sort()
 
-            def to_candidates(x):
-                if x is None or (isinstance(x, float) and math.isnan(x)):
-                    return []
-                if isinstance(x, list):
-                    return x
-                if isinstance(x, (tuple, set)):
-                    return list(x)
-                if hasattr(x, "tolist"):
-                    try:
-                        return x.tolist()
-                    except Exception:
-                        pass
-                if isinstance(x, str):
-                    try:
-                        v = json.loads(x)
-                        return v if isinstance(v, list) else [v]
-                    except Exception:
-                        return [x]
-                return [x]
+        #         if not os.path.exists(target_dir):
+        #             os.makedirs(target_dir, exist_ok=True)
+        #             for zip_file in zip_files:
+        #                 with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+        #                     for member in zip_ref.namelist():
+        #                         if member.endswith('/'):
+        #                             continue
 
-            def generate_tsv(pth):
+        #                         rel = os.path.normpath(member.lstrip("/"))
+        #                         dst = os.path.join(target_dir, rel)
+        #                         os.makedirs(os.path.dirname(dst), exist_ok=True)
 
-                data_file = osp.join(pth, f'{dataset_name}.tsv')
-                if os.path.exists(data_file) and md5(data_file) == self.MD5:
-                    return
+        #                         with zip_ref.open(member) as source, open(dst, 'wb') as target:
+        #                             target.write(source.read())
+        #             print('The video file has been restored and stored from the zip file.')
+        #         else:
+        #             print('The video file already exists.')
 
-                data_file = pd.read_parquet(os.path.join(pth, 'test-00000-of-00001.parquet'))
-                data_file = data_file.assign(index=range(len(data_file)))
+        #     def to_candidates(x):
+        #         if x is None or (isinstance(x, float) and math.isnan(x)):
+        #             return []
+        #         if isinstance(x, list):
+        #             return x
+        #         if isinstance(x, (tuple, set)):
+        #             return list(x)
+        #         if hasattr(x, "tolist"):
+        #             try:
+        #                 return x.tolist()
+        #             except Exception:
+        #                 pass
+        #         if isinstance(x, str):
+        #             try:
+        #                 v = json.loads(x)
+        #                 return v if isinstance(v, list) else [v]
+        #             except Exception:
+        #                 return [x]
+        #         return [x]
 
-                data_file['index'] = data_file['id']
-                data_file["video"] = (
-                    data_file["dataset"].astype(str).str.rstrip("/")
-                    + "/" +
-                    data_file["scene_name"].astype(str).str.removesuffix(".mp4")
-                    + ".mp4"
-                )
-                data_file['candidates'] = data_file['options'].apply(to_candidates)
-                data_file['question'] = data_file['question']
-                data_file['answer'] = data_file['ground_truth']
-                data_file['question_type'] = data_file['question_type']
+        #     def generate_tsv(pth):
 
-                out_cols = ["index", "video", "candidates",
-                            "question", "answer", "question_type"]
+        #         data_file = osp.join(pth, f'{dataset_name}.tsv')
+        #         if os.path.exists(data_file) and md5(data_file) == self.MD5:
+        #             return
 
-                data_file[out_cols].to_csv(osp.join(pth, f'{dataset_name}.tsv'), sep="\t", index=False)
+        #         data_file = pd.read_parquet(os.path.join(pth, 'test-00000-of-00001.parquet'))
+        #         data_file = data_file.assign(index=range(len(data_file)))
 
-            if modelscope_flag_set():
-                from modelscope import dataset_snapshot_download
-                dataset_path = dataset_snapshot_download(dataset_id=repo_id)
-            else:
-                dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
-            unzip_hf_zip(dataset_path)
-            generate_tsv(dataset_path)
+        #         data_file['index'] = data_file['id']
+        #         data_file["video"] = (
+        #             data_file["dataset"].astype(str).str.rstrip("/")
+        #             + "/" +
+        #             data_file["scene_name"].astype(str).str.removesuffix(".mp4")
+        #             + ".mp4"
+        #         )
+        #         data_file['candidates'] = data_file['options'].apply(to_candidates)
+        #         data_file['question'] = data_file['question']
+        #         data_file['answer'] = data_file['ground_truth']
+        #         data_file['question_type'] = data_file['question_type']
 
-        data_file = osp.join(dataset_path, f'{dataset_name}.tsv')
+        #         out_cols = ["index", "video", "candidates",
+        #                     "question", "answer", "question_type"]
+
+        #         data_file[out_cols].to_csv(osp.join(pth, f'{dataset_name}.tsv'), sep="\t", index=False)
+
+        #     if modelscope_flag_set():
+        #         from modelscope import dataset_snapshot_download
+        #         dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+        #     else:
+        #         dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
+        #     unzip_hf_zip(dataset_path)
+        #     generate_tsv(dataset_path)
+
+        # data_file = osp.join(dataset_path, f'{dataset_name}.tsv')
+
+        data_file = '/mnt/aigc/shared_env/huggingface/hub/datasets--nyu-visionx--VSI-Bench/snapshots/bc96b17cb6be84878a6c1f2e64c24346356e0d04/VSI-Bench_origin.tsv'
+        dataset_path = '/mnt/aigc/shared_env/huggingface/hub/datasets--nyu-visionx--VSI-Bench/snapshots/bc96b17cb6be84878a6c1f2e64c24346356e0d04'
+
+        vsi_debiased = getenv_bool("vsi_debiased", False)
+
+        print(f"------------------ vsi_debiased:{vsi_debiased} ---------------------------------")
+        if vsi_debiased:
+
+            print(f"------------------ using VSI Debiased ---------------------------------")
+
+            data_file = '/mnt/aigc/wangyubo/data/UG/data/benchmark/opensource_tsv/VSI-Bench-Debiased_origin.tsv'
+            dataset_path = '/mnt/aigc/shared_env/huggingface/hub/datasets--nyu-visionx--VSI-Bench/snapshots/bc96b17cb6be84878a6c1f2e64c24346356e0d04'
+
+        vsi_rel_dir = getenv_bool("vsi_rel_dir", False)
+        print(f"------------------ vsi_rel_dir:{vsi_rel_dir} ---------------------------------")
+        if vsi_rel_dir:
+
+            print(f"------------------ using VSI vsi_rel_dir ---------------------------------")
+
+            data_file = '/mnt/aigc/wangyubo/data/UG/data/benchmark/opensource_tsv/VSI-Bench-rel-dir_origin.tsv'
+            dataset_path = '/mnt/aigc/shared_env/huggingface/hub/datasets--nyu-visionx--VSI-Bench/snapshots/bc96b17cb6be84878a6c1f2e64c24346356e0d04'
+
 
         return dict(data_file=data_file, root=dataset_path)
 
@@ -240,7 +324,7 @@ class VsiBench(VideoBaseDataset):
             if self.sample_strategy == 'uniform_tail' and (video_nframes - 1) != indices[-1]:
                 indices.append(video_nframes - 1)
 
-            frame_paths = self.frame_paths_fps(video_path)
+            frame_paths = self.frame_paths_fps(video_path, len(indices))
 
         flag = np.all([osp.exists(p) for p in frame_paths])
 
@@ -253,7 +337,50 @@ class VsiBench(VideoBaseDataset):
 
         return frame_paths, indices, video_info
 
+    # def build_prompt(self, line, video_llm):
+    #     if isinstance(line, int):
+    #         assert line < len(self)
+    #         line = self.data.iloc[line]
+
+    #     question = line['question']
+    #     question_type = str(line['question_type'])
+    #     task_type = self.get_task_type(question_type)
+
+    #     if task_type == "MCQ":
+    #         options = ast.literal_eval(line['candidates'])
+    #         formatted_options = '\n'.join(options)
+
+    #     # use vsi origin prompt
+    #     if self.variant == 'origin':
+    #         if task_type == 'MCQ':
+    #             prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, formatted_options, self.ORIGIN_MCQ_POST_PROMPT])
+    #         else:
+    #             prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, self.ORIGIN_VQA_POST_PROMPT])
+    #     else:
+    #         if task_type == 'MCQ':
+    #             prompt = "\n".join([self.STANDARD_MCQ_SYS_PROMPT, question, formatted_options])
+    #         else:
+    #             prompt = "\n".join([self.STANDARD_VQA_SYS_PROMPT, question])
+
+    #     message = []
+
+    #     if video_llm:
+    #         message.append(dict(type='video', value=osp.join(self.data_root, 'video', line['video'])))
+    #     else:
+    #         frames, _, _ = self.save_video_frames(line['video'], video_llm)
+    #         for im in frames:
+    #             message.append(dict(type='image', value=im))
+
+    #     message.append(dict(type='text', value=prompt))
+
+    #     # print(f"message: {message}")
+
+    #     return message
+
     def build_prompt(self, line, video_llm):
+        use_ruisi_prompt = getenv_bool("use_ruisi_prompt", False)
+        use_cgmap = getenv_bool("use_cgmap", False)
+
         if isinstance(line, int):
             assert line < len(self)
             line = self.data.iloc[line]
@@ -269,27 +396,50 @@ class VsiBench(VideoBaseDataset):
         # use vsi origin prompt
         if self.variant == 'origin':
             if task_type == 'MCQ':
-                prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, formatted_options, self.ORIGIN_MCQ_POST_PROMPT])
+                if not use_ruisi_prompt:
+                    prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, formatted_options, self.ORIGIN_MCQ_POST_PROMPT])
+                else:
+                    prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, formatted_options, RUISI_POST_PROMPT])
             else:
-                prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, self.ORIGIN_VQA_POST_PROMPT])
+                if not use_ruisi_prompt:
+                    prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, self.ORIGIN_VQA_POST_PROMPT])
+                else:
+                    prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, RUISI_NA_POST_PROMPT])
         else:
             if task_type == 'MCQ':
                 prompt = "\n".join([self.STANDARD_MCQ_SYS_PROMPT, question, formatted_options])
             else:
                 prompt = "\n".join([self.STANDARD_VQA_SYS_PROMPT, question])
 
+        if use_cgmap:
+            if task_type == 'MCQ':
+                question = f"[Question]\n{question}"
+                prompt = "\n".join([AUG_CG_MAP, question, formatted_options])
+                # print(f"prompt: {prompt}")
+            else:
+                prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, self.ORIGIN_VQA_POST_PROMPT])
+
         message = []
 
+        peter_test = getenv_bool("peter_test", False)
+
         if video_llm:
-            message.append(dict(type='video', value=osp.join(self.data_root, 'video', line['video'])))
+            if peter_test:
+                pass
+            else:
+                message.append(dict(type='video', value=osp.join(self.data_root, 'video', line['video'])))
         else:
-            frames, _, _ = self.save_video_frames(line['video'], video_llm)
-            for im in frames:
-                message.append(dict(type='image', value=im))
+            if peter_test:
+                pass
+            else:
+                frames, _, _ = self.save_video_frames(line['video'], video_llm)
+                for im in frames:
+                    message.append(dict(type='image', value=im))
 
         message.append(dict(type='text', value=prompt))
 
         return message
+
 
     def evaluate(self, eval_file, **judge_kwargs):
         from .utils.spatial_rel_bench.cal_scores import compute_mcq_score, compute_na_score

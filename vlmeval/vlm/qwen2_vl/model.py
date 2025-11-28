@@ -14,6 +14,8 @@ from .prompt import Qwen2VLPromptMixin
 from ...smp import get_gpu_memory, listinstr
 from ...dataset import DATASET_MODALITY
 
+from ...smp import *
+
 VLLM_MAX_IMAGE_INPUT_NUM = 24
 
 
@@ -201,13 +203,31 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         self.max_new_tokens = max_new_tokens
         if self.total_pixels and self.total_pixels > 24576 * 28 * 28:
             print('The total number of video tokens might become too large, resulting in an overly long input sequence. We recommend lowering **total_pixels** to below **24576 × 28 × 28**.')  # noqa: E501
+        # self.generate_kwargs = dict(
+        #     max_new_tokens=self.max_new_tokens,
+        #     top_p=top_p,
+        #     top_k=top_k,
+        #     temperature=temperature,
+        #     repetition_penalty=repetition_penalty,
+        # )
+
         self.generate_kwargs = dict(
-            max_new_tokens=self.max_new_tokens,
-            top_p=top_p,
-            top_k=top_k,
-            temperature=temperature,
-            repetition_penalty=repetition_penalty,
+            max_new_tokens=2048,
+            top_p=1.0,
+            temperature=0.0,
+            do_sample=False,
+            num_beams=1
         )
+
+        vst_test = getenv_bool("vst_test", False)
+        if vst_test:
+            self.generate_kwargs = dict(
+                max_new_tokens=256,
+                top_p=0.001,
+                temperature=0.1,
+                repetition_penalty=1.05,
+            )
+
         self.system_prompt = system_prompt
         self.verbose = verbose
         self.post_process = post_process
@@ -219,26 +239,36 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                   the fps/nframe setting in video dataset is omitted")
         self.use_audio_in_video = use_audio_in_video
         self.FRAME_FACTOR = 2
+
         assert model_path is not None
         self.model_path = model_path
+
+        import os
+        user_model_path = os.environ.get('Qwen25_ckpt_path', None)
+        if user_model_path is not None:
+            self.model_path = user_model_path
+
+        print(f"Using Qwen25 ckpt from : {self.model_path}")
+
+
         MODEL_CLS = None
 
-        if listinstr(['omni'], model_path.lower()):
+        if listinstr(['omni'], self.model_path.lower()):
             try:
                 from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor
             except Exception as err:
                 logging.critical("pip install git+https://github.com/huggingface/transformers@3a1ead0aabed473eafe527915eea8c197d424356")  # noqa: E501
                 raise err
             MODEL_CLS = Qwen2_5OmniForConditionalGeneration
-            self.processor = Qwen2_5OmniProcessor.from_pretrained(model_path)
-        elif listinstr(['2.5', '2_5', 'qwen25', 'mimo'], model_path.lower()):
+            self.processor = Qwen2_5OmniProcessor.from_pretrained(self.model_path,)
+        elif listinstr(['2.5', '2_5', 'qwen25', 'mimo'], self.model_path.lower()):
             from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
             MODEL_CLS = Qwen2_5_VLForConditionalGeneration
-            self.processor = AutoProcessor.from_pretrained(model_path)
+            self.processor = AutoProcessor.from_pretrained(self.model_path)
         else:
             from transformers import Qwen2VLForConditionalGeneration, Qwen2VLProcessor
             MODEL_CLS = Qwen2VLForConditionalGeneration
-            self.processor = Qwen2VLProcessor.from_pretrained(model_path)
+            self.processor = Qwen2VLProcessor.from_pretrained(self.model_path,)
 
         gpu_mems = get_gpu_memory()
         max_gpu_mem = max(gpu_mems) if gpu_mems != [] else -1
@@ -275,20 +305,21 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                 limit_mm_per_prompt={"image": self.limit_mm_per_prompt},
                 tensor_parallel_size=tp_size,
                 gpu_memory_utilization=kwargs.get("gpu_utils", 0.9),
+                disable_custom_all_reduce=True,
             )
 
         elif self.use_lmdeploy:
             from lmdeploy import TurbomindEngineConfig, pipeline, ChatTemplateConfig
             num_gpus = torch.cuda.device_count()
             self.model = pipeline(
-                model_path,
+                self.model_path,
                 backend_config=TurbomindEngineConfig(session_len=32768, cache_max_entry_count=0.1, tp=num_gpus),
                 chat_template_config=ChatTemplateConfig(model_name='qwen2d5-vl'))
             torch.cuda.set_device(0)
             self.device = 'cuda'
         else:
             self.model = MODEL_CLS.from_pretrained(
-                model_path, torch_dtype='auto', device_map="auto", attn_implementation='flash_attention_2'
+                self.model_path, torch_dtype='auto', device_map="auto", attn_implementation='flash_attention_2'
             )
             self.model.eval()
 
@@ -448,6 +479,8 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
             except Exception as err:
                 logging.critical("qwen_vl_utils not found, please install it via 'pip install qwen-vl-utils'")  # noqa: E501
                 raise err
+
+        print(f"message: {message}")
 
         messages = []
         if self.system_prompt is not None:
@@ -735,4 +768,277 @@ class Qwen2VLChatAguvis(Qwen2VLChat):
 
         if self.verbose:
             print(f"\033[32m{response}\033[0m")
+        return response
+
+
+class Qwen2VLChat_SingleCard(Qwen2VLChat):
+    """
+    强制单卡加载版本：
+    - transformers 路径：device_map 绑到 cuda:{device_id}
+    - vLLM 路径：tensor_parallel_size=1（配合 CUDA_VISIBLE_DEVICES 选卡）
+    - lmdeploy 路径：tp=1
+    - 同时把默认 CUDA 设备切到 device_id，避免父类里对 'cuda' 的硬编码跑错卡
+    """
+
+    VIDEO_LLM = True
+
+    def __init__(self,
+                 model_path: str,
+                 # ===== 原父类参数 =====
+                 min_pixels: int | None = None,
+                 max_pixels: int | None = None,
+                 total_pixels: int | None = None,
+                 max_new_tokens=2048,
+                 top_p=0.001,
+                 top_k=1,
+                 temperature=0.01,
+                 repetition_penalty=1.0,
+                 use_custom_prompt: bool = True,
+                 system_prompt: str | None = None,
+                 post_process: bool = False,
+                 verbose: bool = False,
+                 use_audio_in_video: bool = False,
+                 device_id: int = 0,
+                 force_single_device: bool = True,
+                 model_name: str | None = None,
+                 **kwargs
+                ):
+        # 1) 先设默认设备到目标卡（影响后续 'cuda' 默认指向）
+        import torch, logging, warnings, os
+        try:
+            torch.cuda.set_device(device_id)
+        except Exception as e:
+            warnings.warn(f"set_device({device_id}) 失败：{e}，将继续尝试显式 device_map 绑定。")
+
+        # system_prompt = "You are a helpful assistant."
+        # min_pixels = int(256 * 28 * 28)
+        # max_pixels = int(1605632)
+
+        self.model_name = model_name if model_name is not None else model_path
+
+        print(f" self. model_name: {self.model_name}")
+
+        # 2) 保存你要的设备字符串，后面统一用
+        self.device = f"cuda:{device_id}"
+        self.force_single_device = force_single_device
+        print(f" Qwen single card device: {self.device}")
+
+        # 3) 复制父类里前半段参数初始化（保持行为一致）
+        Qwen2VLPromptMixin.__init__(self, use_custom_prompt=use_custom_prompt)
+        self.min_pixels = min_pixels
+        self.max_pixels = max_pixels
+        self.total_pixels = total_pixels
+        self.max_new_tokens = max_new_tokens
+        if self.total_pixels and self.total_pixels > 24576 * 28 * 28:
+            print('The total number of video tokens might become too large, resulting in an overly long input sequence. '  # noqa: E501
+                  'We recommend lowering total_pixels to below 24576 × 28 × 28.')
+        self.generate_kwargs = dict(
+            max_new_tokens=self.max_new_tokens,
+            top_p=top_p,
+            top_k=top_k,
+            temperature=temperature,
+            repetition_penalty=repetition_penalty,
+        )
+        # ## mindcube
+        # self.generate_kwargs = dict(
+        #     max_new_tokens=4096,
+        #     top_p=1.0,
+        #     # top_k=top_k,
+        #     temperature=0.0,
+        #     do_sample=False
+        #     # repetition_penalty=repetition_penalty,
+        # )
+
+        ### site
+        self.generate_kwargs = dict(
+            max_new_tokens=2048,
+            top_p=1.0,
+            temperature=0.0,
+            do_sample=False,
+            num_beams=1
+        )
+
+        vst_test = getenv_bool("vst_test", False)
+        if vst_test:
+            self.generate_kwargs = dict(
+                max_new_tokens=256,
+                top_p=0.001,
+                temperature=0.1,
+                repetition_penalty=1.05,
+            )
+        ladder_test = getenv_bool("ladder_test", False)
+        if ladder_test:
+            self.generate_kwargs = dict(
+                max_new_tokens=128,
+                temperature=0.01,
+                use_cache=True,
+            )
+
+        # ### vsi
+        # self.generate_kwargs = dict(
+        #     max_new_tokens=16,
+        #     top_p=1.0,
+        #     temperature=0.0,
+        #     do_sample=False,
+        #     num_beams=1
+        # )
+
+        self.system_prompt = system_prompt
+        self.verbose = verbose
+        self.post_process = post_process
+        self.fps = kwargs.pop('fps', 2)
+        self.nframe = kwargs.pop('nframe', 128)
+        if self.fps is None and self.nframe is None:
+            print("Warning: fps and nframe are both None, using default setting in qwen-vl-utils/qwen-omni-utils")
+        self.use_audio_in_video = use_audio_in_video
+        self.FRAME_FACTOR = 2
+
+        assert model_path is not None
+        self.model_path = model_path
+
+        user_model_path = os.environ.get('Qwen25_ckpt_path', None)
+        if user_model_path is not None:
+            self.model_path = user_model_path
+
+        print(f"Using Qwen25 ckpt from : {self.model_path}")
+
+        # 4) 选择对应的 MODEL_CLS 和 processor（与父类一致）
+        MODEL_CLS = None
+        def listinstr(keys, s):  # 父类里用到的小工具，这里补一下
+            s = s or ""
+            return any(k in s for k in keys)
+
+        if listinstr(['omni'], self.model_name.lower()):
+            try:
+                from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor
+            except Exception as err:
+                logging.critical("pip install git+https://github.com/huggingface/transformers@3a1ead0aabed473eafe527915eea8c197d424356")
+                raise err
+            MODEL_CLS = Qwen2_5OmniForConditionalGeneration
+            self.processor = Qwen2_5OmniProcessor.from_pretrained(self.model_path)
+        elif listinstr(['2.5', '2_5', 'qwen25', 'mimo'], self.model_name.lower()):
+            from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+            MODEL_CLS = Qwen2_5_VLForConditionalGeneration
+            self.processor = AutoProcessor.from_pretrained(self.model_path)
+        else:
+            from transformers import Qwen2VLForConditionalGeneration, Qwen2VLProcessor
+            MODEL_CLS = Qwen2VLForConditionalGeneration
+            self.processor = Qwen2VLProcessor.from_pretrained(self.model_path)
+
+        # 5) 读取多后端开关
+        self.use_vllm = kwargs.get('use_vllm', False)
+        self.use_lmdeploy = kwargs.get('use_lmdeploy', False)
+        self.limit_mm_per_prompt = VLLM_MAX_IMAGE_INPUT_NUM
+        assert (1 if self.use_vllm else 0) + (1 if self.use_lmdeploy else 0) <= 1, \
+            "Only one of `use_vllm` and `use_lmdeploy` can be True"
+
+        # 6) 真正加载模型 —— 这里强制“单卡”
+        if self.use_vllm:
+            # vLLM 无法直接指定具体 cuda:x，只能依赖 CUDA_VISIBLE_DEVICES；这里把并行度卡死为 1
+            from vLLM import LLM  # 如果你实际 import 名是 vllm，请改为 from vllm import LLM
+            logging.info(f'Using vLLM (single-card) for {self.model_path}; set CUDA_VISIBLE_DEVICES to bind a GPU.')
+            self.llm = LLM(
+                model=self.model_path,
+                max_num_seqs=5,
+                max_model_len=32768,
+                limit_mm_per_prompt={"image": self.limit_mm_per_prompt} if self.limit_mm_per_prompt else None,
+                tensor_parallel_size=1,                # ← 单卡
+                gpu_memory_utilization=kwargs.get("gpu_utils", 0.9),
+            )
+
+        elif self.use_lmdeploy:
+            from lmdeploy import TurbomindEngineConfig, pipeline, ChatTemplateConfig
+            # 强制单卡并行（tp=1）
+            self.model = pipeline(
+                self.model_path,
+                backend_config=TurbomindEngineConfig(session_len=32768,
+                                                     cache_max_entry_count=0.1,
+                                                     tp=1),             # ← 单卡
+                chat_template_config=ChatTemplateConfig(model_name='qwen2d5-vl')
+            )
+            # 把当前进程默认 CUDA 设备切过去，父类里 'cuda' 会落在这张卡
+            try:
+                torch.cuda.set_device(device_id)
+            except Exception:
+                pass
+
+        else:
+            # transformers 路径：显式把整个权重映射到这张卡
+            self.model = MODEL_CLS.from_pretrained(
+                self.model_path,
+                # torch_dtype='auto',
+                torch_dtype=torch.bfloat16,
+                device_map={"": self.device} if force_single_device else "auto",
+                attn_implementation='flash_attention_2'
+            )
+            self.model.eval()
+
+        torch.cuda.empty_cache()
+
+    # 可选：如果你担心父类里把 inputs 固定 .to('cuda')，
+    # 可以轻微覆写一下，把 'cuda' 改成 self.device（也最小改动）：
+    def generate_inner_transformers(self, message, dataset=None):
+        # 直接复用父类逻辑，但把最后移动设备那行改一下
+        if 'omni' in self.model_path.lower():
+            try:
+                from qwen_omni_utils import process_mm_info
+            except Exception as err:
+                import logging
+                logging.critical("qwen_omni_utils not found, please `pip install qwen-omni-utils[decord]`")
+                raise err
+        else:
+            try:
+                from qwen_vl_utils import process_vision_info
+            except Exception as err:
+                import logging
+                logging.critical("qwen_vl_utils not found, please `pip install qwen-vl-utils`")
+                raise err
+
+        messages = []
+        if self.system_prompt is not None:
+            messages.append({'role': 'system', 'content': self.system_prompt})
+        messages.append({'role': 'user', 'content': self._prepare_content(message, dataset=dataset)})
+        if self.verbose:
+            print(f'\033[31m{messages}\033[0m')
+
+        text = self.processor.apply_chat_template([messages], tokenize=False, add_generation_prompt=True)
+        if 'omni' in self.model_path.lower():
+            audios, images, videos = process_mm_info([messages], use_audio_in_video=self.use_audio_in_video)
+            inputs = self.processor(text=text, images=images, audio=audios, videos=videos,
+                                    padding=True, return_tensors='pt', use_audio_in_video=self.use_audio_in_video)
+        else:
+            images, videos = process_vision_info([messages])
+            inputs = self.processor(text=text, images=images, videos=videos, padding=True, return_tensors='pt')
+        # 关键：移到 self.device（而不是写死 'cuda'）
+        inputs = inputs.to(self.device)
+
+        if 'omni' in self.model_path.lower():
+            self.generate_kwargs['use_audio_in_video'] = self.use_audio_in_video
+            self.generate_kwargs['return_audio'] = False
+
+        generated_ids = self.model.generate(**inputs, **self.generate_kwargs)
+        generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(inputs.input_ids, generated_ids)]
+        out = self.processor.tokenizer.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)  # noqa: E501
+        response = out[0]
+
+        if self.post_process:
+            resp = response.split('\\boxed{')[-1]
+            lt = len(resp)
+            counter, end = 1, None
+            for i in range(lt):
+                if resp[i] == '{':
+                    counter += 1
+                elif resp[i] == '}':
+                    counter -= 1
+                if counter == 0:
+                    end = i
+                    break
+                elif i == lt - 1:
+                    end = lt
+                    break
+            if end is not None:
+                response = resp[:end]
+
+        if self.verbose:
+            print(f'\033[32m{response}\033[0m')
         return response

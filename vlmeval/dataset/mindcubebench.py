@@ -4,10 +4,14 @@ import ast
 from tqdm import tqdm
 
 from .image_mcq import ImageMCQDataset
-from ..smp.file import LMUDataRoot, load
+from ..smp.file import LMUDataRoot, load, getenv_bool
 from ..smp.misc import toliststr, get_cache_path, modelscope_flag_set
 
 from huggingface_hub import snapshot_download
+
+RUISI_POST_PROMPT = (
+    "Enclose your thinking process in <think> </think> tags and your final answer in <answer> </answer>."
+)
 
 
 class MindCubeBench(ImageMCQDataset):
@@ -16,6 +20,8 @@ class MindCubeBench(ImageMCQDataset):
     MINDCUBE_TASKS = [
         'raw_qa',
         'tiny_raw_qa',
+        'tiny_raw_qa_circular',
+        'tiny_aug_cgmap_ffr_out'
     ]
 
     LMUData_root = LMUDataRoot()
@@ -24,7 +30,9 @@ class MindCubeBench(ImageMCQDataset):
     # #TODO:change this to hugging face path after upload
     DATASET_URL = {
         "MindCubeBench_tiny_raw_qa": "https://huggingface.co/datasets/y-playground/EASI_Mindcube/resolve/main/MindCubeBench_tiny_raw_qa.tsv",  # noqa: E501
-        "MindCubeBench_raw_qa": f"{os.path.join(LMUData_root, 'MindCubeBench_raw_qa.tsv')}"
+        "MindCubeBench_raw_qa": f"{os.path.join(LMUData_root, 'MindCubeBench_raw_qa.tsv')}",
+        "MindCubeBench_tiny_raw_qa_circular": f"{os.path.join(LMUData_root, 'MindCubeBench_tiny_raw_qa_circular.tsv')}",  # noqa: E501
+        "MindCubeBench_tiny_aug_cgmap_ffr_out": f"{os.path.join(LMUData_root, 'MindCubeBench_tiny_aug_cgmap_ffr_out.tsv')}"  # noqa: E501
     }
 
     DATASET_MD5 = {key: None for key in DATASET_URL}
@@ -115,7 +123,24 @@ class MindCubeBench(ImageMCQDataset):
 
         return data
 
+    # def build_prompt(self, line):
+    #     if isinstance(line, int):
+    #         line = self.data.iloc[line]
+
+    #     if self.meta_only:
+    #         tgt_path = toliststr(line['image_path'])
+    #     else:
+    #         tgt_path = self.dump_image(line)
+
+    #     # # Raw QA prompt format use in paper
+    #     prompt = line['input_prompt']
+
+    #     msgs = self.build_msgs(tgt_path, prompt)
+    #     return msgs
+
     def build_prompt(self, line):
+        use_ruisi_prompt = getenv_bool("use_ruisi_prompt", False)
+
         if isinstance(line, int):
             line = self.data.iloc[line]
 
@@ -125,9 +150,15 @@ class MindCubeBench(ImageMCQDataset):
             tgt_path = self.dump_image(line)
 
         # # Raw QA prompt format use in paper
-        prompt = line['input_prompt']
+        if not use_ruisi_prompt:
+            prompt = line['input_prompt']
+        else:
+            question = line['question']
+            prompt = question + "\n" + RUISI_POST_PROMPT
 
         msgs = self.build_msgs(tgt_path, prompt)
+        # print(f"msgs:{msgs}")
+
         return msgs
 
     @staticmethod
@@ -135,6 +166,8 @@ class MindCubeBench(ImageMCQDataset):
         """
         Interlaced text and pictures
         """
+        peter_test = getenv_bool("peter_test", False)
+
         images = tgt_path if isinstance(tgt_path, list) else [tgt_path]
 
         parts = prompt.split('<image>')
@@ -145,7 +178,10 @@ class MindCubeBench(ImageMCQDataset):
             if part:
                 segs.append(dict(type='text', value=part))
             if (i != len(parts) - 1) and (i < len(images)):
-                segs.append(dict(type='image', value=images[i]))
+                if peter_test:
+                    pass
+                else:
+                    segs.append(dict(type='image', value=images[i]))
 
         return [s for s in segs if s['value']]
 

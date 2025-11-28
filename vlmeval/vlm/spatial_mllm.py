@@ -10,35 +10,41 @@ from .qwen2_vl.model import ensure_image_url, ensure_video_url
 from ..smp import get_gpu_memory, listinstr
 from ..dataset import DATASET_TYPE, DATASET_MODALITY
 
+import sys
+sys.path.append("/mnt/aigc/users/sunqingping/code/cambrian-s")
+
+import torch.nn.functional as F
+import numpy as np
+
 
 class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
     """
     Spatial-MLLM: Boosting MLLM Capabilities in Visual-based Spatial Intelligence
-    
+
     Requirements:
     1. Clone the forked Spatial-MLLM repository (includes pyproject.toml):
        git clone https://github.com/oscarqjh/Spatial-MLLM.git
-    
+
     2. Install in development mode with the same virtual environment:
        cd Spatial-MLLM
        uv pip install -e .
-       
+
        OR using regular pip:
        cd Spatial-MLLM
        pip install -e .
-    
+
     Note: This will automatically install all dependencies including torch, transformers, etc.
     """
-    
+
     INSTALL_REQ = True
     INTERLEAVE = True
 
     # Spatial-MLLM specific question type templates (from official VSI-Bench eval)
     SFT_QUESTION_TEMPLATE = "{Question}"
     SFT_TYPE_TEMPLATE = {
-        "multiple choice": " Please answer with the option's letter from the given choices (e.g., A, B, etc.) within the <answer> </answer> tags.",
-        "numerical": " Please answer with the only numerical value (e.g., 42, 3.14, etc.) within the <answer> </answer> tags.",
-        "regression": " Please answer with the only numerical value (e.g., 42, 3.14, etc.) within the <answer> </answer> tags.",
+        "multiple choice": " Please answer with the option's letter from the given choices (e.g., A, B, etc.) within the <answer> </answer> tags.",  # noqa: E501
+        "numerical": " Please answer with the only numerical value (e.g., 42, 3.14, etc.) within the <answer> </answer> tags.",  # noqa: E501
+        "regression": " Please answer with the only numerical value (e.g., 42, 3.14, etc.) within the <answer> </answer> tags.",  # noqa: E501
         "verbal": " Please answer the question simply within the <answer> </answer> tags",
     }
 
@@ -54,7 +60,7 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
     ):
         """
         Initialize Spatial-MLLM model.
-        
+
         Args:
             model_path (str): Path to the pre-trained Spatial-MLLM model
             min_pixels (int): Minimum number of pixels for image/video processing
@@ -80,13 +86,13 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
             raise err
 
         super().__init__()
-        
+
         assert model_path is not None
         self.model_path = model_path
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
         self.max_num_frames = max_num_frames
-        self.use_custom_prompt_flag = use_custom_prompt
+        self.use_custom_prompt_flag = False
         self.post_process = post_process
 
         # Initialize model and processor
@@ -113,12 +119,12 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
                 self.model = Qwen2_5_VL_VGGTForConditionalGeneration.from_pretrained(
                     model_path,
                     torch_dtype="bfloat16",
-                    device_map="auto" 
+                    device_map="auto"
                 )
                 self.processor = Qwen2_5_VLProcessor.from_pretrained(model_path)
 
         self.model.eval()
-        
+
         # Default generation parameters
         kwargs_default = dict(
             do_sample=True,
@@ -129,10 +135,12 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
         )
         kwargs_default.update(kwargs)
         self.kwargs = kwargs_default
-        
+
         warnings.warn(f"Following kwargs received: {self.kwargs}, will use as generation config.")
 
     def use_custom_prompt(self, dataset):
+        return False
+
         if self.use_custom_prompt_flag:
             return True
         # Use custom prompt for MCQ datasets
@@ -145,15 +153,15 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
         if self.use_custom_prompt_flag:
             # Use the parent class method from Qwen2VLPromptMixin
             return super().build_prompt(line, dataset)
-        
+
         # Apply Spatial-MLLM specific formatting for different question types
         if dataset is not None and DATASET_TYPE(dataset) == "MCQ":
             # For MCQ datasets, use proper Spatial-MLLM formatting
             question = line.get('question', '')
-            
+
             # Determine question type and format accordingly
             problem_type = "multiple choice"  # Default for MCQ
-            
+
             # Format multiple choice questions with options
             if 'options' in line:
                 formatted_question = question + "\nOptions:\n"
@@ -168,12 +176,12 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
             else:
                 # No explicit options found, use question as-is
                 formatted_question = question
-            
+
             # Apply the template
             full_prompt = self.SFT_QUESTION_TEMPLATE.format(Question=formatted_question)
             full_prompt += self.SFT_TYPE_TEMPLATE[problem_type]
             return full_prompt
-        
+
         # For other cases, use parent class method or return question directly
         if hasattr(super(), 'build_prompt'):
             return super().build_prompt(line, dataset)
@@ -182,16 +190,16 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
     def _prepare_inputs(self, inputs: list, dataset: str = None):
         """
         Prepare inputs for the model, handling both images and videos.
-        
+
         Args:
             inputs: List of input dictionaries with 'type' and 'value' keys
             dataset: Dataset name for any dataset-specific processing
-            
+
         Returns:
             List of messages in the format expected by the processor
         """
         content = []
-        
+
         for item in inputs:
             if item['type'] == 'image':
                 # Handle both PIL Image objects and file paths/URLs
@@ -207,7 +215,7 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
                     })
             elif item['type'] == 'video':
                 content.append({
-                    "type": "video", 
+                    "type": "video",
                     "video": ensure_video_url(item['value']),
                     "nframes": self.max_num_frames
                 })
@@ -216,45 +224,45 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
                     "type": "text",
                     "text": item['value']
                 })
-        
+
         return content
 
     def post_process_response(self, response):
         """
         Post-process the model response to extract clean answers.
-        
+
         Args:
             response (str): Raw model response
-            
+
         Returns:
             str: Cleaned answer or original response if post_process is False
         """
         if not self.post_process:
             return response
-            
+
         import re
-        
+
         # Extract content from <answer>...</answer> tags
         answer_match = re.search(r'<answer>\s*([^<]+?)\s*</answer>', response, re.IGNORECASE)
         if answer_match:
             return answer_match.group(1).strip()
-        
+
         # Extract content from <points>...</points> tags (for numerical answers)
         points_match = re.search(r'<points>\s*([^<]+?)\s*</points>', response, re.IGNORECASE)
         if points_match:
             return points_match.group(1).strip()
-            
+
         # If no tags found, return original response
         return response
 
     def generate_inner(self, message, dataset=None):
         """
         Generate response from the model.
-        
+
         Args:
             message: Input message (str or list of dicts)
             dataset: Dataset name
-            
+
         Returns:
             str: Generated response
         """
@@ -263,6 +271,8 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
         except ImportError:
             logging.critical("qwen_vl_utils not found, please install it via 'pip install qwen-vl-utils'")
             raise
+
+        # print(f"message: {message}")
 
         # Handle different message formats
         if isinstance(message, str):
@@ -279,10 +289,13 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
         text = self.processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        
+
         # Process vision information
         image_inputs, video_inputs = process_vision_info(messages)
-        
+
+        if image_inputs:
+            image_inputs = _pad_images_to_max(image_inputs)
+
         # Prepare inputs for the model
         inputs = self.processor(
             text=[text],
@@ -291,12 +304,19 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
             padding=True,
             return_tensors="pt",
         )
-        
+
+        # print("type(inputs):", type(inputs))
+        # print("keys:", inputs.keys())
+        # for k, v in inputs.items():
+        #     if isinstance(v, torch.Tensor):
+        #         print(k, v.shape, v.dtype, v.device)
+        #     else:
+        #         print(k, type(v))
+
         # Add spatial processing (specific to Spatial-MLLM)
         # Convert PIL images to VGGT-compatible format
         if image_inputs:
             # Convert PIL images to tensor format expected by VGGT: (B, S, C, H, W)
-            import numpy as np
             image_tensors = []
             for img in image_inputs:
                 # Convert PIL to numpy array (H, W, C)
@@ -306,39 +326,43 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
                 # Add sequence dimension: (S=1, C, H, W)
                 img_tensor = img_tensor.unsqueeze(0)
                 image_tensors.append(img_tensor)
-            
+
             # Stack into batch: (B, S, C, H, W)
             images_batch = torch.stack(image_tensors)
             inputs.update({"images_input": images_batch})
-            
+
+            # print(f"images_batch: {images_batch.shape}")
+
         if video_inputs:
-            # For videos, we need to set videos_input for VGGT processing  
+            # For videos, we need to set videos_input for VGGT processing
             videos_tensor = torch.stack(video_inputs) / 255.0
             inputs.update({"videos_input": videos_tensor})
-        
+
         inputs = inputs.to(self.model.device)
-        
+
         # Ensure spatial tensors are on the same device as the model
         if "images_input" in inputs:
             inputs["images_input"] = inputs["images_input"].to(self.model.device)
         if "videos_input" in inputs:
             inputs["videos_input"] = inputs["videos_input"].to(self.model.device)
-        
+
         # Generate response
         with torch.no_grad():
+            for k in ("nframe", "nframes", "num_frames", "fps"):
+                self.kwargs.pop(k, None)
             generated_ids = self.model.generate(**inputs, **self.kwargs)
-        
+
         # Decode the response
         generated_ids_trimmed = [
             out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
         ]
-        
+
         output_text = self.processor.batch_decode(
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
         )
-        
+
         response = output_text[0] if output_text else ""
-        
+
         # Apply post-processing if enabled
         return self.post_process_response(response)
 
@@ -359,3 +383,127 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
             "min_pixels": self.min_pixels,
             "max_pixels": self.max_pixels,
         }
+
+
+class SpatialMLLM_SingleCard(SpatialMLLM):
+    """
+    强制单卡加载版本（不侵入原类）：
+    - 通过 device_map={"": f"cuda:{device_id}"} 把整模映射到指定 GPU
+    - 其他行为与 SpatialMLLM 一致
+    """
+    def __init__(
+        self,
+        model_path="Diankun/Spatial-MLLM-subset-sft",
+        min_pixels=1280 * 28 * 28,
+        max_pixels=16384 * 28 * 28,
+        max_num_frames=16,
+        use_custom_prompt=False,
+        post_process=False,
+        device_id: int = 0,             # 传入要绑定的 GPU 编号
+        force_single_device: bool = True,
+        replica_id: int = 0,
+        **kwargs
+    ):
+        # 不调用 super().__init__，避免其内部 device_map="auto"
+        try:
+            from spatialmllm.models import (
+                Qwen2_5_VL_VGGTForConditionalGeneration,
+                Qwen2_5_VLProcessor
+            )
+        except ImportError as err:
+            logging.critical(
+                "Failed to import Spatial-MLLM components. Ensure you have:\n"
+                "1) git clone https://github.com/oscarqjh/Spatial-MLLM.git\n"
+                "2) cd Spatial-MLLM && uv pip install -e .\n"
+                f"Original error: {err}"
+            )
+            raise err
+
+        # —— 与父类同名属性，保持兼容 —— #
+        assert model_path is not None
+        self.model_path = model_path
+        self.min_pixels = min_pixels
+        self.max_pixels = max_pixels
+        self.max_num_frames = max_num_frames
+        self.use_custom_prompt_flag = use_custom_prompt
+        self.post_process = post_process
+
+        # 目标设备
+        self.device = torch.device(f"cuda:{device_id}" if torch.cuda.is_available() else "cpu")
+        self.device_map = {"": self.device} if force_single_device else "auto"
+
+        # Initialize model and processor
+        try:
+            self.model = Qwen2_5_VL_VGGTForConditionalGeneration.from_pretrained(
+                model_path,
+                torch_dtype="bfloat16",
+                device_map=self.device_map,
+                attn_implementation="flash_attention_2"
+            )
+            self.processor = Qwen2_5_VLProcessor.from_pretrained(model_path)
+        except Exception as e:
+            logging.warning(f"Flash attention failed: {e}. Trying without flash attention.")
+            try:
+                self.model = Qwen2_5_VL_VGGTForConditionalGeneration.from_pretrained(
+                    model_path,
+                    torch_dtype="bfloat16",
+                    device_map=self.device_map,
+                    attn_implementation="eager"
+                )
+                self.processor = Qwen2_5_VLProcessor.from_pretrained(model_path)
+            except Exception as e2:
+                logging.warning(f"Eager attention failed: {e2}. Using default attention.")
+                self.model = Qwen2_5_VL_VGGTForConditionalGeneration.from_pretrained(
+                    model_path,
+                    torch_dtype="bfloat16",
+                    device_map=self.device_map
+                )
+                self.processor = Qwen2_5_VLProcessor.from_pretrained(model_path)
+
+        self.model.eval()
+
+        # Default generation parameters
+        kwargs_default = dict(
+            do_sample=True,
+            temperature=0.1,
+            top_p=0.001,
+            max_new_tokens=1024,
+            use_cache=True,
+        )
+        kwargs_default.update(kwargs)
+        self.kwargs = kwargs_default
+
+        warnings.warn(f"Following kwargs received: {self.kwargs}, will use as generation config.")
+
+
+from PIL import ImageOps
+
+
+def _pad_images_to_max(image_inputs, fill=(0, 0, 0)):
+    if not image_inputs:
+        return image_inputs
+
+    sizes = []
+    for img in image_inputs:
+        sizes.append(img.size)  # (W, H)
+
+    if len(set(sizes)) == 1:
+        return image_inputs
+
+    max_w = max(w for w, h in sizes)
+    max_h = max(h for w, h in sizes)
+
+    padded = []
+    for img, (w, h) in zip(image_inputs, sizes):
+        pad_w = max_w - w
+        pad_h = max_h - h
+        padding = (
+            pad_w // 2,
+            pad_h // 2,
+            pad_w - pad_w // 2,
+            pad_h - pad_h // 2,
+        )
+        img_padded = ImageOps.expand(img, border=padding, fill=fill)
+        padded.append(img_padded)
+
+    return padded

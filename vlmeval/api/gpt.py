@@ -55,6 +55,8 @@ class OpenAIWrapper(BaseAPI):
         self.temperature = temperature
         self.use_azure = use_azure
 
+        print(f" api base :: {api_base}")
+
         if 'step' in model:
             env_key = os.environ.get('STEPAI_API_KEY', '')
             if key is None:
@@ -79,12 +81,28 @@ class OpenAIWrapper(BaseAPI):
             env_key = os.environ.get('XAI_API_KEY', '')
             if key is None:
                 key = env_key
-        elif 'gemini' in model and 'preview' in model:
-            # Will only handle preview models
-            env_key = os.environ.get('GOOGLE_API_KEY', '')
+        elif 'gemini-3-pro-preview' in model:
+            env_key = os.environ.get('WUHUAN_GEMINI_API_KEY', '')
             if key is None:
                 key = env_key
-            api_base = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        elif 'gemini' in model:
+            # Will only handle preview models
+            # env_key = os.environ.get('GOOGLE_API_KEY', '')
+            # if key is None:
+            #     key = env_key
+            # api_base = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+            env_key = os.environ.get('XAI_API_KEY', '')
+            if key is None:
+                key = env_key
+        elif 'grok' in model:
+            env_key = os.environ.get('XAI_API_KEY', '')
+            if key is None:
+                key = env_key
+        elif 'gpt5' in model:
+            env_key = os.environ.get('XAI_API_KEY')
+            if key is None:
+                key = env_key
+            # api_base = "https://genaiapi.cloudsway.net/v1/ai/QoAQkJLVdhDRCddK/chat/completions"
         elif 'ernie' in model:
             env_key = os.environ.get('BAIDU_API_KEY', '')
             if key is None:
@@ -195,7 +213,134 @@ class OpenAIWrapper(BaseAPI):
             input_msgs.append(dict(role='user', content=self.prepare_itlist(inputs)))
         return input_msgs
 
+    def prepare_input_gemini3(self, inputs):
+        """
+        只做一件事：
+        复用 prepare_inputs + prepare_itlist 的结果，
+        把其中的 content 转成 Gemini 3 所需的 contents 结构：
+        [
+          {"role": "...", "parts": [...]},
+          ...
+        ]
+        不负责 temperature / max_tokens 等参数。
+        """
+        # 先用你原来的逻辑拿到 role + content
+        input_msgs = self.prepare_inputs(inputs)
+
+        contents = []
+        for msg in input_msgs:
+            role = msg.get('role', 'user')
+            content = msg.get('content', "")
+
+            parts = []
+
+            # 情况 1：content 是 prepare_itlist 输出的 list
+            if isinstance(content, list):
+                for c in content:
+                    # 来自 prepare_itlist 的纯文本项：{"type": "text", "text": "..."}
+                    if isinstance(c, dict) and c.get("type") == "text":
+                        parts.append({"text": c.get("text", "")})
+
+                    # 来自 prepare_itlist 的图片项：{
+                        # "type": "image_url", 
+                        # "image_url": {"url": "data:image/jpeg;base64,...", "detail": ...}
+                    # }
+                    elif isinstance(c, dict) and c.get("type") == "image_url":
+                        img_url = c.get("image_url", {}).get("url", "")
+
+                        # img_url 形如 "data:image/jpeg;base64,xxxxx"
+                        mime_type = "image/jpeg"
+                        b64_data = img_url
+
+                        if isinstance(img_url, str) and img_url.startswith("data:") and "," in img_url:
+                            meta, b64_data = img_url.split(",", 1)
+                            # meta 形如 "data:image/jpeg;base64"
+                            try:
+                                mime_type = meta.split(";")[0].split(":", 1)[1]
+                            except Exception:
+                                mime_type = "image/jpeg"
+
+                        parts.append({
+                            "inlineData": {
+                                "mimeType": mime_type,
+                                "data": b64_data,   # 只保留纯 base64 部分
+                            }
+                        })
+
+                    # 兜底：其它情况全当文本
+                    else:
+                        parts.append({"text": str(c)})
+
+            # 情况 2：content 是字符串（比如 system_prompt）
+            else:
+                parts.append({"text": str(content)})
+
+            contents.append({"role": role, "parts": parts})
+
+        return contents
+
+    def generate_inner_gemini3(self, inputs, **kwargs) -> str:
+        # 这里的 temperature / max_tokens 现在只用于 generationConfig
+        temperature = kwargs.pop('temperature', self.temperature)
+        max_tokens = kwargs.pop('max_tokens', self.max_tokens)
+
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.key}',
+        }
+
+        # 只负责把内容（包括图像 base64）准备好
+        contents = self.prepare_input_gemini3(inputs)
+
+        # ====== generationConfig / 采样参数 ======
+        gemini_max_tokens = int(os.getenv('gemini_max_tokens', max_tokens))
+
+        generation_config = {
+            "temperature": float(temperature),
+            "maxOutputTokens": int(gemini_max_tokens),
+        }
+
+        top_p = kwargs.pop('top_p', None)
+        if top_p is not None:
+            generation_config["topP"] = float(top_p)
+        top_k = kwargs.pop('top_k', None)
+        if top_k is not None:
+            generation_config["topK"] = int(top_k)
+
+        payload = {
+            "model": self.model,           # 如果你的网关不需要，可以去掉
+            "contents": contents,
+            "generationConfig": generation_config,
+        }
+
+        # 建议用 json=payload，requests 会自动加 header 和 dumps
+        response = requests.post(
+            self.api_base,
+            headers=headers,
+            json=payload,
+            timeout=self.timeout,
+        )
+
+        ret_code = response.status_code
+        ret_code = 0 if (200 <= int(ret_code) < 300) else ret_code
+
+        answer = self.fail_msg
+        try:
+            resp_struct = response.json()
+            # 如果你的网关直接转发 Gemini，这个路径通常是对的
+            answer = resp_struct['candidates'][0]['content']['parts'][0]['text'].strip()
+        except Exception as err:
+            if self.verbose:
+                self.logger.error(f'{type(err)}: {err}')
+                self.logger.error(response.text if hasattr(response, 'text') else response)
+
+        return ret_code, answer, response
+
+
     def generate_inner(self, inputs, **kwargs) -> str:
+        if 'gemini-3' in self.model:
+            return self.generate_inner_gemini3(inputs, **kwargs)
+
         input_msgs = self.prepare_inputs(inputs)
         temperature = kwargs.pop('temperature', self.temperature)
         max_tokens = kwargs.pop('max_tokens', self.max_tokens)
@@ -223,14 +368,30 @@ class OpenAIWrapper(BaseAPI):
         else:
             payload['max_tokens'] = max_tokens
 
+        # if 'gemini' in self.model:
+        #     payload.pop('max_tokens')
+        #     payload.pop('n')
+        #     payload['reasoning_effort'] = 'high'
+
         if 'gemini' in self.model:
-            payload.pop('max_tokens')
+            # TODO: check gemini max token param
             payload.pop('n')
-            payload['reasoning_effort'] = 'high'
+
+            reasoning_effort = os.getenv('gemini_reasoning_effort', 'medium')
+            gemini_max_tokens = int(os.getenv('gemini_max_tokens', max_tokens))
+
+            payload['reasoning_effort'] = reasoning_effort
+            payload['max_tokens'] = gemini_max_tokens
+            # payload.pop('max_tokens')
+
+        if 'grok' in self.model:
+            max_tokens = int(os.getenv('grok_max_tokens', max_tokens))
+            payload['max_tokens'] = max_tokens
+
 
         response = requests.post(
             self.api_base,
-            headers=headers, data=json.dumps(payload), timeout=self.timeout * 1.1)
+            headers=headers, data=json.dumps(payload), timeout=self.timeout)
         ret_code = response.status_code
         ret_code = 0 if (200 <= int(ret_code) < 300) else ret_code
         answer = self.fail_msg

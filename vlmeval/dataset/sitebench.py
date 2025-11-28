@@ -13,9 +13,14 @@ from collections import OrderedDict
 from huggingface_hub import snapshot_download
 
 from ..smp.misc import toliststr, get_cache_path, modelscope_flag_set
-from ..smp.file import LMUDataRoot, dump, load
+from ..smp.file import LMUDataRoot, dump, load, getenv_bool
 from .video_base import VideoBaseDataset
 from .image_mcq import ImageMCQDataset
+
+
+RUISI_POST_PROMPT = (
+    "Enclose your thinking process in <think> </think> tags and your final answer in <answer> </answer>."
+)
 
 
 class SiteBenchBase:
@@ -231,7 +236,51 @@ class SiteBenchImage(SiteBenchBase, ImageMCQDataset):
 
         return data
 
+    # def build_prompt(self, line):
+
+    #     if isinstance(line, int):
+    #         line = self.data.iloc[line]
+
+    #     if self.meta_only:
+    #         tgt_path = toliststr(line['image_path'])
+    #     else:
+    #         tgt_path = self.dump_image(line)
+
+    #     question = line['question']
+    #     question = "Question:" + question
+
+    #     prompt = ""
+    #     UpperLetters = list(string.ascii_uppercase)
+
+    #     question = line['question']
+    #     options = line['options']
+
+    #     if isinstance(options, str):
+    #         try:
+    #             options = json.loads(options)
+    #         except Exception:
+    #             options = ast.literal_eval(options)
+
+    #     option_text = "\n".join(
+    #         f"{UpperLetters[i]}: {options[i]}"
+    #         for i in range(len(options))
+    #     )
+
+    #     if "<image>" not in question and "<image>" not in option_text:
+    #         prompt += "<image>" * len(tgt_path) + "\n"
+
+    #     # prompt format align with site paper
+    #     prompt += "Question: " + question + "\n"
+    #     prompt += "Options:\n" + option_text + "\n"
+    #     post_prompt = "Give me the answer letter directly. The best answer is:"
+    #     prompt += post_prompt
+
+    #     msgs = self.build_msgs(tgt_path, prompt)
+
+    #     return msgs
+
     def build_prompt(self, line):
+        use_ruisi_prompt = getenv_bool("use_ruisi_prompt", False)
 
         if isinstance(line, int):
             line = self.data.iloc[line]
@@ -267,8 +316,12 @@ class SiteBenchImage(SiteBenchBase, ImageMCQDataset):
         # prompt format align with site paper
         prompt += "Question: " + question + "\n"
         prompt += "Options:\n" + option_text + "\n"
-        post_prompt = "Give me the answer letter directly. The best answer is:"
-        prompt += post_prompt
+
+        if not use_ruisi_prompt:
+            post_prompt = "Give me the answer letter directly. The best answer is:"
+            prompt += post_prompt
+        else:
+            prompt += RUISI_POST_PROMPT
 
         msgs = self.build_msgs(tgt_path, prompt)
 
@@ -279,7 +332,18 @@ class SiteBenchImage(SiteBenchBase, ImageMCQDataset):
         """
         Interlaced text and pictures
         """
+        cambrian_test = getenv_bool("cambrian_test", False)
+
         images = tgt_path if isinstance(tgt_path, list) else [tgt_path]
+
+        # ✅ 只加这一段：cambrian_test 时把图全放前面、文本在最后（去掉占位符）
+        if cambrian_test:
+            text = (prompt or "").replace("<image>", "").strip()
+            segs = [{"type": "image", "value": im} for im in images if im]
+            if text:
+                segs.append({"type": "text", "value": text})
+            return segs
+        # ✅ 到此为止，下面保持你原来的交错逻辑不变
 
         parts = prompt.split('<image>')
         segs = []
@@ -298,7 +362,7 @@ class SiteBenchVideo(SiteBenchBase, VideoBaseDataset):
 
     MD5 = ''
 
-    TYPE = 'Video-MCQ'
+    TYPE = 'MCQ'
     MODALITY = 'VIDEO'
     LMUData_root = LMUDataRoot()
 
@@ -382,7 +446,46 @@ class SiteBenchVideo(SiteBenchBase, VideoBaseDataset):
 
         return frame_paths, indices, video_info
 
+    # def build_prompt(self, line, video_llm):
+    #     if isinstance(line, int):
+    #         assert line < len(self)
+    #         line = self.data.iloc[line]
+
+    #     question = line['question']
+    #     raw_options = ast.literal_eval(line['candidates'])
+
+    #     option_labels = list(string.ascii_uppercase)
+    #     assert len(raw_options) <= len(option_labels), "Too many options, extend option_labels if needed"
+
+    #     options = [f"{label}: {opt}" for label, opt in zip(option_labels, raw_options)]
+    #     formatted_options = '\n'.join(options)
+
+    #     # video prompt from site paper
+    #     pre_prompt = (
+    #         "Select the best answer to the following multiple-choice question based on the video. "
+    #         "Respond with only the letter of the correct option."
+    #     )
+    #     post_prompt = 'Give me the answer letter directly. The best answer is:'
+
+    #     question_text = "Question: " + question + "\n"
+    #     option_text = "Options:\n" + formatted_options + "\n"
+
+    #     prompt = pre_prompt + "\n" + question_text + option_text + post_prompt
+
+    #     message = []
+    #     if video_llm:
+    #         message.append(dict(type='video', value=line['video']))
+    #     else:
+    #         frames, _, _ = self.save_video_frames(line['video'], video_llm)
+    #         for im in frames:
+    #             message.append(dict(type='image', value=im))
+
+    #     message.append(dict(type='text', value=prompt))
+    #     return message
+
     def build_prompt(self, line, video_llm):
+        use_ruisi_prompt = getenv_bool("use_ruisi_prompt", False)
+
         if isinstance(line, int):
             assert line < len(self)
             line = self.data.iloc[line]
@@ -406,7 +509,10 @@ class SiteBenchVideo(SiteBenchBase, VideoBaseDataset):
         question_text = "Question: " + question + "\n"
         option_text = "Options:\n" + formatted_options + "\n"
 
-        prompt = pre_prompt + "\n" + question_text + option_text + post_prompt
+        if not use_ruisi_prompt:
+            prompt = pre_prompt + "\n" + question_text + option_text + post_prompt
+        else:
+            prompt = pre_prompt + "\n" + question_text + option_text + RUISI_POST_PROMPT
 
         message = []
         if video_llm:

@@ -1,9 +1,13 @@
 import time
 import random as rd
-from abc import abstractmethod
-import os.path as osp
+import re
+import json
 import copy as cp
+import base64
+
+from abc import abstractmethod
 from ..smp import get_logger, parse_file, concat_images_vlmeval, LMUDataRoot, md5, decode_base64_to_image_file
+from json import JSONDecodeError
 
 
 class BaseAPI:
@@ -37,6 +41,8 @@ class BaseAPI:
         self.verbose = verbose
         self.fail_msg = fail_msg
         self.logger = get_logger('ChatAPI')
+
+        self.length_msg = 'Hit max new token.'
 
         if len(kwargs):
             self.logger.info(f'BaseAPI received the following kwargs: {kwargs}')
@@ -223,6 +229,9 @@ class BaseAPI:
         Returns:
             str: The generated answer of the Failed Message if failed to obtain answer.
         """
+
+        index = kwargs1.pop("index", None)
+
         if self.check_content(message) == 'listdict':
             message = self.preprocess_message_with_role(message)
 
@@ -244,17 +253,69 @@ class BaseAPI:
         for i in range(self.retry):
             try:
                 ret_code, answer, log = self.generate_inner(message, **kwargs)
-                if ret_code == 0 and self.fail_msg not in answer and answer != '':
+                log_preview = preview_response(log)
+
+                # 用于字段提取的 dict
+                try:
+                    from requests import Response
+                    if isinstance(log, Response):
+                        try:
+                            log_json = log.json()
+                        except Exception:
+                            # 有些返回 header 没标 JSON，但 body 是 JSON
+                            try:
+                                log_json = json.loads(getattr(log, "text", "") or "")
+                            except Exception:
+                                log_json = {}
+                    elif isinstance(log, dict):
+                        log_json = log
+                    elif isinstance(log, str):
+                        try:
+                            log_json = json.loads(log)
+                        except Exception:
+                            log_json = {}
+                    else:
+                        log_json = {}
+                except Exception:
+                    log_json = {}
+
+                # # 兼容多 schema 提取 finish_reason
+                # choices = (
+                #     (log_json.get("data", {}).get("response_content", {}) or {}).get("choices")
+                #     or log_json.get("choices")
+                #     or []
+                # )
+                # finish_reason = (
+                #     choices[0].get("finish_reason")
+                #     if isinstance(choices, list) and choices and isinstance(choices[0], dict)
+                #     else None
+                # )
+                finish_reason = get_finish_reason(log_json)
+
+                # 正常拿到答案
+                # if ret_code == 0 and self.fail_msg not in answer and answer != '':
+                if ret_code == 0 and self.fail_msg not in answer:
                     if self.verbose:
-                        print(answer)
-                    return answer
+                        self.logger.info(
+                            f"[index={index}], RetCode: {ret_code}, finish reason: {finish_reason}\n"
+                            f"Answer: {answer}\n"
+                            f"Log{index}: {log_preview}"
+                        )
+
+                    is_length = finish_reason in ("length", "MAX_TOKENS")
+                    return self.length_msg if is_length else answer
+                    # return self.length_msg if finish_reason == 'length' else answer
                 elif self.verbose:
                     if not isinstance(log, str):
                         try:
                             log = log.text
                         except Exception as e:
                             self.logger.warning(f'Failed to parse {log} as an http response: {str(e)}. ')
-                    self.logger.info(f'RetCode: {ret_code}\nAnswer: {answer}\nLog: {log}')
+                    self.logger.info(
+                        f"[index={index}], RetCode: {ret_code}\n"
+                        f"QuestionAnswer: {answer}\n"
+                        f"Log{index}: {log_preview}"
+                    )
             except Exception as err:
                 if self.verbose:
                     self.logger.error(f'An error occured during try {i}: ')
@@ -294,3 +355,127 @@ class BaseAPI:
 
     def set_dump_image(self, dump_image_func):
         self.dump_image_func = dump_image_func
+
+
+_DATA_URL_RE = re.compile(
+    r'data:([-\w.+/]+);base64,([A-Za-z0-9+/=]{400,})',  # 100+ 视为“大段”
+    re.IGNORECASE
+)
+
+
+def _redact_data_urls(s: str) -> str:
+    def _repl(m):
+        mime = m.group(1)
+        n = len(m.group(2))
+        return f"<data-url:{mime}; base64 {n} chars omitted>"
+    return _DATA_URL_RE.sub(_repl, s)
+
+
+def preview_response(resp, max_len=20000):
+    try:
+        from requests import Response
+        if isinstance(resp, Response):
+            ct = (resp.headers.get("content-type") or "").lower()
+            status = resp.status_code
+
+            if "application/json" in ct:
+                try:
+                    d = resp.json()
+                    s = json.dumps(d, ensure_ascii=False)
+                except JSONDecodeError:
+                    s = resp.text
+                # 只在这里做 base64 折叠
+                s = _redact_data_urls(s)
+                return f"HTTP {status} | {s[:max_len]}"
+
+            # 非 JSON：直接 text，且只折叠 data URL
+            s = resp.text
+            s = _redact_data_urls(s)
+            return f"HTTP {status} | {s[:max_len]}"
+    except Exception:
+        pass
+
+    # 非 Response：dict/list/str；也只折叠 data URL
+    if isinstance(resp, (dict, list)):
+        s = json.dumps(resp, ensure_ascii=False)
+        s = _redact_data_urls(s)
+        return s[:max_len]
+
+    s = str(resp)
+    s = _redact_data_urls(s)
+    return s[:max_len]
+
+
+def response_to_dict(resp):
+    from requests import Response
+    if isinstance(resp, Response):
+        try:
+            return resp.json()  # 优先尝试 JSON
+        except Exception:
+            ct = resp.headers.get("content-type", "")
+            if "text" in ct or "html" in ct:
+                return {"raw_text": resp.text}
+            else:
+                return {"raw_bytes": base64.b64encode(resp.content).decode()}
+    elif isinstance(resp, str):
+        try:
+            return json.loads(resp)
+        except Exception:
+            return {"raw_text": resp}
+    elif isinstance(resp, dict):
+        return resp
+    else:
+        return {"raw": str(resp)}
+
+
+def get_finish_reason(log_json):
+    """只提取 finish_reason；若没有则尝试 native_finish_reason。绝不做标准化。"""
+    if not isinstance(log_json, dict):
+        return None
+
+    # 按优先级尝试几条最常见路径
+    paths = [
+        ("data", "response_content", "choices"),  # 你的旧情况
+        ("choices",),                             # 你的新例子/常见
+        ("data", "choices"),                      # 偶尔有厂商用这个
+    ]
+
+    for path in paths:
+        node = log_json
+        for k in path:
+            if isinstance(node, dict) and k in node:
+                node = node[k]
+            else:
+                node = None
+                break
+        if node is None:
+            continue
+
+        # 取第一个 choice
+        if isinstance(node, list) and node:
+            first = node[0]
+        elif isinstance(node, dict):
+            first = node
+        else:
+            continue
+
+        if isinstance(first, dict):
+            # 直接拿 finish_reason
+            fr = first.get("finish_reason")
+            if fr is not None:
+                return fr
+            # 没有就兜底拿 native_finish_reason
+            nfr = first.get("native_finish_reason")
+            if nfr is not None:
+                return nfr
+            # 某些在 message 里
+            msg = first.get("message")
+            if isinstance(msg, dict):
+                fr = msg.get("finish_reason")
+                if fr is not None:
+                    return fr
+                nfr = msg.get("native_finish_reason")
+                if nfr is not None:
+                    return nfr
+
+    return None

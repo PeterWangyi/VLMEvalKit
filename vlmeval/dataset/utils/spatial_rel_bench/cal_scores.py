@@ -125,13 +125,19 @@ def compute_caa_score(df_all: pd.DataFrame, default_choices: int = 4) -> float:
     return float((sum_Xi - sum_1_ni) / denom) if denom != 0 else 0.0
 
 
+from collections import OrderedDict
+import warnings
+import pandas as pd
+
+
 def eval_mcq_core(
     *,
     load_fn,
     eval_file: str,
     score_fn,
-    group_col: str = 'category',
-    order: list[str] | None = None,
+    group_col: str | list[str] = 'category',
+    # order: list 或 dict；单 group 时仍然是 list；多 group 时用 dict[col] = list
+    order: list[str] | dict[str, list[str]] | None = None,
     dataset_name: str = 'MCQ'
 ):
     suffix = eval_file.split('.')[-1]
@@ -145,32 +151,52 @@ def eval_mcq_core(
         data = data.sort_values(by='index')
     data['prediction'] = [str(x) for x in data['prediction']]
 
+    # 只算一次 hit
     mcq_scored = score_fn(data.copy())
 
-    if order is None:
-        order = []
-    if group_col in mcq_scored.columns:
-        present = list(mcq_scored[group_col].dropna().unique().tolist())
+    # ---------- 统一处理 group_cols / order_map ----------
+    if isinstance(group_col, str):
+        group_cols = [group_col]
     else:
-        present = []
-    remain = [c for c in present if c not in order]
-    cat_order = order + remain
+        group_cols = list(group_col)
+
+    if isinstance(order, dict) or order is None:
+        order_map: dict[str, list[str]] = order or {}
+    else:
+        # 兼容老接口：只传一个 order list
+        order_map = {group_cols[0]: order}
 
     summary = OrderedDict()
     overall_acc = float(mcq_scored['hit'].mean()) if len(mcq_scored) else 0.0
     summary['overall'] = overall_acc * 100.0
 
-    if group_col in mcq_scored.columns:
-        for cat in cat_order:
-            sub = mcq_scored[mcq_scored[group_col] == cat]
-            if len(sub):
-                summary[f'{cat}_accuracy'] = float(sub['hit'].mean()) * 100.0
+    # ---------- 多维度统计 ----------
+    for gc in group_cols:
+        if gc not in mcq_scored.columns:
+            continue
 
+        # 指定顺序 + 其余出现过的
+        preferred = order_map.get(gc, []) or []
+        present = list(mcq_scored[gc].dropna().unique().tolist())
+        remain = [c for c in present if c not in preferred]
+        cat_order = preferred + remain
+
+        # 多个 group 时加前缀区分；单个 group 与旧行为保持一致
+        prefix = '' if len(group_cols) == 1 else f'{gc}.'
+
+        for cat in cat_order:
+            sub = mcq_scored[mcq_scored[gc] == cat]
+            if len(sub):
+                acc = float(sub['hit'].mean()) * 100.0
+                summary[f'{prefix}{cat}_accuracy'] = acc
+
+    # tabulated 方便 latex
     tab_keys = ", ".join(list(summary.keys()))
     tab_vals = ", ".join([f"{v:.3f}" for v in summary.values()])
     summary['tabulated_keys'] = tab_keys
     summary['tabulated_results'] = tab_vals
 
+    # ---------- 存 pkl ----------
     try:
         import pickle
         with open(result_file, 'wb') as f:
@@ -179,11 +205,16 @@ def eval_mcq_core(
     except Exception as e:
         warnings.warn(f"[save] failed to save result to {result_file}: {e}")
 
+    # ---------- 存 extract_matching.xlsx ----------
     try:
         prefer_front = [
-            'index', 'question_type', group_col,
+            'index', 'question_type',
+            # 注意：这里放的是第一个 group_col（和旧逻辑一致）
+            group_cols[0] if group_cols else None,
             'prediction', 'pred_extracted', 'answer', 'hit'
         ]
+        prefer_front = [c for c in prefer_front if c is not None]
+
         merged = mcq_scored.copy()
         ordered_cols = [c for c in prefer_front if c in merged.columns] + \
                        [c for c in merged.columns if c not in prefer_front]
@@ -194,23 +225,35 @@ def eval_mcq_core(
     except Exception as e:
         warnings.warn(f"[save] failed to save extract xlsx to {xlsx_path}: {e}")
 
+    # ---------- 存 acc.tsv ----------
     try:
         acc_df = pd.DataFrame(
-            [(k, v) for k, v in summary.items() if k not in ('tabulated_keys', 'tabulated_results')],
+            [(k, v) for k, v in summary.items()
+             if k not in ('tabulated_keys', 'tabulated_results')],
             columns=['metric', 'value']
         )
-        metric_order = ['overall'] + [f'{c}_accuracy' for c in order] + \
-                       [k for k in acc_df['metric'].tolist()
-                        if k not in (['overall'] + [f'{c}_accuracy' for c in order])]
+
+        metric_order = ['overall']
+
+        # 为每个 group 依次把“显式 order”排在前面
+        for gc in group_cols:
+            preferred = order_map.get(gc, []) or []
+            prefix = '' if len(group_cols) == 1 else f'{gc}.'
+            metric_order += [f'{prefix}{c}_accuracy' for c in preferred]
+
+        # 其它 metric 放后面
+        metric_order += [k for k in acc_df['metric'].tolist()
+                         if k not in metric_order]
+
         # acc_df = acc_df.set_index('metric').reindex(metric_order).reset_index()
         # acc_df = acc_df.dropna(subset=['value'])
         # acc_df.to_csv(acc_tsv_path, sep='\t', index=False)
-        # print(f"[save] accuracy table saved to {acc_tsv_path}")
 
         acc_df = acc_df.set_index('metric').reindex(metric_order).dropna(subset=['value'])
         wide = acc_df.T                             # 列 = metric，只有一行
         wide.to_csv(acc_tsv_path, sep='\t', index=False, float_format='%.4f')
 
+        print(f"[save] accuracy table saved to {acc_tsv_path}")
     except Exception as e:
         warnings.warn(f"[save] failed to save acc tsv to {acc_tsv_path}: {e}")
 

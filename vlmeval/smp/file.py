@@ -541,3 +541,17 @@ def prepare_reuse_files(pred_root_meta, eval_id, model_name, dataset_name, reuse
             os.system(f'cp {f} {work_dir}')
             warnings.warn(f'--reuse-aux is set, will reuse auxiliary file {f}')
     return
+
+
+def getenv_bool(name: str, default: bool = False) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    v = v.strip().lower()
+
+    if v in ("1", "true", "t", "yes", "y", "on"):
+        return True
+    if v in ("0", "false", "f", "no", "n", "off", ""):
+        return False
+
+    return default

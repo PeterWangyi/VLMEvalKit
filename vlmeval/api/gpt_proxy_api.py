@@ -91,7 +91,7 @@ class OpenAIProxyWrapper(BaseAPI):
             **kwargs)
 
         if self.o1_model:
-            reasoning_effort = os.getenv('gpt5_reasoning_effort', 'minimal')
+            reasoning_effort = os.getenv('gpt5_reasoning_effort', 'medium')
             gpt5_max_tokens = int(os.getenv('gpt5_max_tokens', 2048))
 
             payload['max_completion_tokens'] = gpt5_max_tokens

@@ -1,3 +1,4 @@
+import os
 import math
 import pandas as pd
 import random
@@ -104,12 +105,21 @@ def extract_boxed_content(ans: str):
     return content
 
 
+InternVL_kwargs_default = dict(
+    do_sample=False,
+    max_new_tokens=8192,
+    top_p=1.0,
+    temperature=0.0,
+)
+
+
 class InternVLChat(BaseModel):
     INSTALL_REQ = False
     INTERLEAVE = True
 
     def __init__(self,
                  model_path='OpenGVLab/InternVL-Chat-V1-5',
+                 use_custom_prompt: bool = True,
                  load_in_8bit=False,
                  use_mpo_prompt=False,
                  version='V1.0',
@@ -133,6 +143,7 @@ class InternVLChat(BaseModel):
         self.use_mpo_prompt = use_mpo_prompt
         self.use_cot = (os.getenv('USE_COT') == '1')
         self.use_postprocess = use_postprocess
+        self._use_custom_prompt = use_custom_prompt
 
         if cot_prompt_version == 'r1':
             self.system_prompt = R1_SYSTEM_PROMPT
@@ -155,7 +166,13 @@ class InternVLChat(BaseModel):
             self.cot_prompt = None
 
         self.model_path = model_path
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
+
+        user_model_path = os.environ.get('InternVL_ckpt_path', None)
+        if user_model_path is not None:
+            self.model_path = user_model_path
+
+        print(f"Use model path : {self.model_path}")
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, trust_remote_code=True, use_fast=False)
 
         # Regular expression to match the pattern 'Image' followed by a number, e.g. Image1
         self.pattern = r'Image(\d+)'
@@ -173,26 +190,31 @@ class InternVLChat(BaseModel):
         self.screen_parse = screen_parse
 
         if use_lmdeploy:
+            # from lmdeploy import TurbomindEngineConfig, VisionConfig, pipeline, ChatTemplateConfig
             from lmdeploy import TurbomindEngineConfig, PytorchEngineConfig, VisionConfig, pipeline
-            engine_type = PytorchEngineConfig if "internvl3_5" in model_path.lower() else TurbomindEngineConfig
+            # engine_type = PytorchEngineConfig if "internvl3_5" in model_path.lower() else TurbomindEngineConfig
+
             vision_config = VisionConfig(max_batch_size=4)
             num_gpus = torch.cuda.device_count()
             self.model = pipeline(
-                model_path,
+                self.model_path,
                 vision_config=vision_config,
-                backend_config=engine_type(
-                    session_len=max(16384, kwargs.get("max_new_tokens", 16384)),
-                    cache_max_entry_count=0.5,
-                    tp=num_gpus,
-                )
+                # chat_template_config=ChatTemplateConfig(model_name='internvl2_5'),
+                # backend_config=TurbomindEngineConfig(session_len=65536, cache_max_entry_count=0.8, tp=num_gpus),
+                # backend_config=engine_type(
+                #     session_len=max(16384, kwargs.get("max_new_tokens", 16384)),
+                #     cache_max_entry_count=0.5,
+                #     tp=num_gpus,
+                # ),
+                # log_level='INFO'
             )
             torch.cuda.set_device(0)
             self.device = 'cuda'
         else:
             self.model = AutoModel.from_pretrained(
-                model_path,
+                self.model_path,
                 torch_dtype=torch.bfloat16,
-                load_in_8bit=load_in_8bit,
+                # load_in_8bit=load_in_8bit,
                 trust_remote_code=True,
                 low_cpu_mem_usage=True,
                 device_map="auto").eval()
@@ -207,7 +229,7 @@ class InternVLChat(BaseModel):
             self.reward_model = AutoModel.from_pretrained(
                 reward_model_path,
                 torch_dtype=torch.bfloat16,
-                load_in_8bit=load_in_8bit,
+                # load_in_8bit=load_in_8bit,
                 trust_remote_code=True,
                 low_cpu_mem_usage=True,
                 device_map="auto").eval()
@@ -222,30 +244,36 @@ class InternVLChat(BaseModel):
         # self.image_size = self.model.config.vision_config.image_size
         self.version = version
         self.best_of_n = best_of_n
-        kwargs_default = dict(do_sample=False, max_new_tokens=4096, top_p=None)
+        kwargs_default = InternVL_kwargs_default
         kwargs_default.update(kwargs)
         self.kwargs = kwargs_default
 
         warnings.warn(f'Following kwargs received: {self.kwargs}, will use as generation config. ')
 
     def use_custom_prompt(self, dataset):
-        assert dataset is not None
-        if dataset in [
-            'atomic_dataset', 'electro_dataset', 'mechanics_dataset',
-            'optics_dataset', 'quantum_dataset', 'statistics_dataset'
-        ]:
+        if not self._use_custom_prompt:
             return False
-        if listinstr(['MMDU', 'MME-RealWorld', 'MME-RealWorld-CN', 'WeMath_COT', 'MMAlignBench', 'ChartQAPro', 'ChartMuseum'], dataset):  # noqa: E501
-            # For Multi-Turn we don't have custom prompt
-            return False
-        if DATASET_TYPE(dataset) == 'MCQ':
-            if dataset is not None and 'LEGO' in dataset:
-                return False
-        if DATASET_MODALITY(dataset) == 'VIDEO':
-            # For Video benchmarks we don't have custom prompt at here
-            return False
-        else:
-            return True
+
+        return False
+
+        # assert dataset is not None
+        # if dataset in [
+        #     'atomic_dataset', 'electro_dataset', 'mechanics_dataset',
+        #     'optics_dataset', 'quantum_dataset', 'statistics_dataset'
+        # ]:
+        #     return False
+
+        # if listinstr(['MMDU', 'MME-RealWorld', 'MME-RealWorld-CN', 'WeMath_COT', 'MMAlignBench', 'ChartQAPro', 'ChartMuseum'], dataset):  # noqa: E501
+        #     # For Multi-Turn we don't have custom prompt
+        #     return False
+        # if DATASET_TYPE(dataset) == 'MCQ':
+        #     if dataset is not None and 'LEGO' in dataset:
+        #         return False
+        # if DATASET_MODALITY(dataset) == 'VIDEO':
+        #     # For Video benchmarks we don't have custom prompt at here
+        #     return False
+        # else:
+        #     return True
 
     def build_prompt(self, line, dataset=None):
         use_mpo_prompt = self.use_mpo_prompt and (self.use_cot or dataset in ['MMStar', 'HallusionBench', 'OCRBench'])
@@ -254,6 +282,7 @@ class InternVLChat(BaseModel):
         assert dataset is None or isinstance(dataset, str)
         tgt_path = self.dump_image(line, dataset)
         if dataset is not None and listinstr(['BMMR'], dataset):
+            # self.kwargs['max_new_tokens'] = 8196
             self.kwargs['max_new_tokens'] = max(self.kwargs.get('max_new_tokens', 4096), 8196)
             print(f'[Warning] BMMR dataset requires a larger max_new_tokens, set to {self.kwargs["max_new_tokens"]}')
 
@@ -276,12 +305,7 @@ class InternVLChat(BaseModel):
             elif listinstr(['OCRVQA', 'TextVQA', 'ChartQA', 'DocVQA', 'InfoVQA', 'OCRBench',
                             'DUDE', 'SLIDEVQA', 'GQA', 'MMLongBench_DOC'], dataset):
                 prompt = question + '\nAnswer the question using a single word or phrase.'
-            elif listinstr(['MathVerse'], dataset):
-                question = question.replace("please directly answer the question and", "please")
-                prompt = question
-                if os.getenv('USE_COT') == '1':
-                    prompt = build_qa_cot_prompt(line, prompt, self.cot_prompt)
-            elif listinstr(['MathVista', 'MathVision', 'VCR', 'MTVQA', 'MMVet',
+            elif listinstr(['MathVista', 'MathVision', 'VCR', 'MTVQA', 'MMVet', 'MathVerse',
                             'MMDU', 'CRPE', 'MIA-Bench', 'MM-Math', 'DynaMath', 'QSpatial',
                             'WeMath', 'LogicVista', 'MM-IFEval', 'ChartMimic'], dataset):
                 prompt = question
@@ -391,7 +415,17 @@ class InternVLChat(BaseModel):
         use_mpo_prompt = self.use_mpo_prompt and (self.use_cot or dataset in ['MMStar', 'HallusionBench', 'OCRBench'])
 
         image_num = len([x for x in message if x['type'] == 'image'])
-        max_num = max(1, min(self.max_num, self.total_max_num // image_num))
+
+        # print(f"-------------------------image num: {image_num}----------------")
+
+        # max_num = max(1, min(self.max_num, self.total_max_num // image_num))
+
+        if image_num == 0:
+            max_num = max(1, min(self.max_num, self.total_max_num))
+        else:
+            max_num = max(1, min(self.max_num, self.total_max_num // image_num))
+
+
         prompt = reorganize_prompt(message, image_num, dataset=dataset)
 
         if dataset is not None and DATASET_MODALITY(dataset) == 'VIDEO':
@@ -417,12 +451,16 @@ class InternVLChat(BaseModel):
             pixel_values = None
             num_patches_list = []
 
+        # print(f"pixel_values shape: {pixel_values.shape}")
+
         response_list = []
         for idx in range(self.best_of_n):
             kwargs_default = self.kwargs.copy()
             kwargs_default['do_sample'] = idx > 0 or kwargs_default.get('do_sample', False)
-            kwargs_default['temperature'] = 0.6
-            kwargs_default['top_p'] = 0.95
+            # kwargs_default['temperature'] = 0.6
+            # kwargs_default['top_p'] = 0.95
+
+            # print(f"using kwargs: {kwargs_default}")
 
             if self.use_lmdeploy:
                 from lmdeploy import GenerationConfig
@@ -435,14 +473,21 @@ class InternVLChat(BaseModel):
             else:
                 if self.system_prompt is not None:
                     self.model.system_message = self.system_prompt
-                response = self.model.chat(
-                    self.tokenizer,
-                    pixel_values=pixel_values,
-                    num_patches_list=num_patches_list,
-                    question=prompt,
-                    generation_config=kwargs_default,
-                    verbose=idx == 0,
-                )
+
+                try:
+                    response = self.model.chat(
+                        self.tokenizer,
+                        pixel_values=pixel_values,
+                        num_patches_list=num_patches_list,
+                        question=prompt,
+                        generation_config=kwargs_default,
+                        verbose=False,
+                    )
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()   # <—— 关键：完整调用栈
+                    raise
+
             response_list.append(response)
 
         if self.best_of_n > 1:
@@ -580,3 +625,159 @@ class InternVLChat(BaseModel):
             return self.chat_inner_v2(message, dataset)
         else:
             raise ValueError(f'Unsupported version for Multi-Turn: {self.version}')
+
+
+class InternVLChat_SingleCard(InternVLChat):
+    INSTALL_REQ = False
+    INTERLEAVE = True
+    PARALLEL_SAFE = True  # 告诉上层：该实例可并发
+
+    def __init__(self,
+                 model_path='OpenGVLab/InternVL-Chat-V1-5',
+                 use_custom_prompt: bool = True,
+                 load_in_8bit=False,
+                 use_mpo_prompt=False,
+                 version='V1.0',
+                 screen_parse=True,
+                 # Best-of-N
+                 best_of_n=1,
+                 reward_model_path=None,
+                 # R1
+                 cot_prompt_version='v1',
+                 #
+                 use_lmdeploy=False,
+                 use_postprocess=False,
+                 device_id=None,
+                 force_single_device=True,
+                 **kwargs):
+        # ---- 直接重写 init，不调用 super().__init__，但保持父类依赖的成员齐全 ----
+
+        assert best_of_n >= 1
+        assert model_path is not None
+        assert version_cmp(transformers.__version__, '4.37.2', 'ge')
+
+        self.use_lmdeploy = use_lmdeploy
+        self.cot_prompt_version = cot_prompt_version
+        self.use_mpo_prompt = use_mpo_prompt
+        self.use_cot = (os.getenv('USE_COT') == '1')
+        self.use_postprocess = use_postprocess
+        self._use_custom_prompt = use_custom_prompt
+
+        # === COT 提示，保持与父类一致 ===
+        if cot_prompt_version == 'r1':
+            self.system_prompt = R1_SYSTEM_PROMPT
+            self.cot_prompt = 'Please answer the question and put the final answer within \\boxed{}.'
+        elif cot_prompt_version == 'v2':
+            self.system_prompt = None
+            self.cot_prompt = (
+                "Answer the preceding multiple-choice question by carefully analyzing the provided image.\n"
+                "Please answer with carefully thought step by step. Apply the thinking process recursively "
+                "at both macro and micro levels.\nVerify consistency of reasoning and look for potential "
+                "flaws or gaps during thinking.\nWhen realize mistakes, explain why the previous thinking "
+                "was incorrect, fix it and then continue thinking.\nThe last line of your response should "
+                "follow this format: 'Answer: \\boxed{$LETTER}'\n\n"
+            )
+        else:
+            assert cot_prompt_version == 'v1'
+            self.system_prompt = None
+            self.cot_prompt = None
+
+        # 模型路径（允许用环境变量覆盖）
+        self.model_path = os.environ.get('InternVL_ckpt_path', model_path)
+        print(f"Use model path : {self.model_path}")
+
+        # 分词器
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model_path, trust_remote_code=True, use_fast=False
+        )
+
+        # Image1 <-> Image-1 替换规则（父类方法会用到）
+        self.pattern = r'Image(\d+)'
+        self.replacement = r'Image-\1'
+        self.reverse_pattern = r'Image-(\d+)'
+        self.reverse_replacement = r'Image\1'
+
+        self.screen_parse = screen_parse
+        self.version = version
+        self.best_of_n = best_of_n
+
+        # ---- 仅在这里处理“单卡/多卡后端”的差异 ----
+        if self.use_lmdeploy:
+            # 保持父类 lmdeploy 路径（如需强制单卡 tp，可按需改）
+            from lmdeploy import TurbomindEngineConfig, VisionConfig, pipeline
+            vision_config = VisionConfig(max_batch_size=4)
+            num_gpus = torch.cuda.device_count()
+            self.model = pipeline(
+                self.model_path,
+                vision_config=vision_config,
+                backend_config=TurbomindEngineConfig(session_len=65536, cache_max_entry_count=0.8, tp=num_gpus),
+                log_level='INFO'
+            )
+            torch.cuda.set_device(0)
+            self.device = 'cuda'
+        else:
+            if force_single_device and device_id is not None:
+                device_map = {"": f"cuda:{device_id}"}
+                self.device = f"cuda:{device_id}"
+            else:
+                device_map = "auto"
+                self.device = "cuda"
+
+            print(f"internvl_single_device: cuda: {device_id}")
+
+            self.model = AutoModel.from_pretrained(
+                self.model_path,
+                torch_dtype=torch.bfloat16,
+                # load_in_8bit=load_in_8bit,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True,
+                device_map=device_map
+            ).eval()
+
+        # ---- Best-of-N（保持与父类一致）----
+        if best_of_n > 1:
+            assert version == 'V2.0', 'only support BoN evaluation with version==V2.0'
+            assert reward_model_path is not None
+            self.reward_tokenizer = AutoTokenizer.from_pretrained(
+                reward_model_path, trust_remote_code=True, use_fast=False
+            )
+            self.reward_model = AutoModel.from_pretrained(
+                reward_model_path,
+                torch_dtype=torch.bfloat16,
+                # load_in_8bit=load_in_8bit,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True,
+                device_map="auto"
+            ).eval()
+            if not self.use_cot:
+                os.environ['USE_COT'] = '1'
+                self.use_cot = True
+                print('[Warning] Since Best-of-N is enabled, USE_COT is forced to be set to 1.')
+            print(f'Enable Best-of-N evaluation with PRM: {reward_model_path}')
+
+        # ---- 生成参数白名单过滤（不把内部控制键混进来）----
+        # 可选：剔除你不想透传给 generate 的内部键
+        internal_keys = {
+            "device_id", "force_single_device", "replica_id",
+            "use_lmdeploy", "screen_parse", "best_of_n", "reward_model_path",
+            "use_postprocess", "cot_prompt_version", "use_mpo_prompt", "version",
+            "load_in_8bit"
+        }
+        for k in list(kwargs.keys()):
+            if k in internal_keys:
+                kwargs.pop(k)
+
+        default_gen = InternVL_kwargs_default
+        try:
+            allowed = set(self.model.generation_config.to_dict().keys())
+        except Exception:
+            allowed = {
+                "do_sample","temperature","top_p","top_k","num_beams","max_new_tokens",
+                "min_new_tokens","repetition_penalty","length_penalty","no_repeat_ngram_size",
+                "num_return_sequences","early_stopping","pad_token_id","eos_token_id"
+            }
+        cleaned = {k: v for k, v in kwargs.items() if k in allowed}
+        default_gen.update(cleaned)
+        self.kwargs = default_gen
+
+        warnings.warn(f'Following kwargs received: {self.kwargs}, will use as generation config. ')
