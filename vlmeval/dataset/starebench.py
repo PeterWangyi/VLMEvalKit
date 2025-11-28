@@ -19,12 +19,17 @@ from ..smp.misc import toliststr, get_cache_path, modelscope_flag_set
 class StareBench(ImageMCQDataset):
     TYPE = 'MCQ'
 
-    DATASET_URL = {
-        'StareBench': '/mnt/aigc/wangyubo/data/UG/data/benchmark/opensource_tsv/StareBench.tsv',
-        'StareBench_CoT': '/mnt/aigc/wangyubo/data/UG/data/benchmark/opensource_tsv/StareBench_CoT.tsv'
-    }
+    STARE_TSV_URL = 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/StareBench.tsv'
+    STARE_TSV_MD5 = '2d2b1cf9a0fcdf4e5beec3377bc586f8'
 
-    DATASET_MD5 = {key: None for key in DATASET_URL}
+    VARIANTS = ['StareBench', 'StareBench_CoT']
+
+    DATASET_URL = {}
+    DATASET_MD5 = {}
+
+    for name in VARIANTS:
+        DATASET_URL[name] = STARE_TSV_URL
+        DATASET_MD5[name] = STARE_TSV_MD5
 
     def __init__(self, dataset, skip_noimg=True):
         super().__init__(dataset=dataset, skip_noimg=skip_noimg)
@@ -239,8 +244,6 @@ class StareBench(ImageMCQDataset):
 
         prompt = "\n".join([mcq_format, post_prompt])
 
-        print(f"prompt: {prompt}")
-
         msgs = self.build_msgs(tgt_path, prompt)
 
         return msgs
@@ -422,7 +425,7 @@ class StareBench(ImageMCQDataset):
             (2D, 3D, cube, tangram, temporal, perspective)
           where MCQ uses accuracy, binary uses F1.
         """
-        from .utils.spatial_rel_bench.cal_scores import compute_mcq_score
+        from .utils.spatial_bench.cal_scores import compute_mcq_score
 
         suffix = eval_file.split('.')[-1]
         result_file = eval_file.replace(f'.{suffix}', '_result.pkl')

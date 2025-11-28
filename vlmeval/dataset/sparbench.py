@@ -8,7 +8,7 @@ from collections import OrderedDict
 from ..smp.misc import toliststr
 from ..smp.file import load
 from .image_base import ImageBaseDataset
-from .utils.spatial_rel_bench.cal_scores import (
+from .utils.spatial_bench.cal_scores import (
     compute_mcq_score, compute_na_score, mean_relative_accuracy
 )
 
@@ -16,15 +16,15 @@ from .utils.spatial_rel_bench.cal_scores import (
 class SparBench(ImageBaseDataset):
     TYPE = 'VQA'
 
-    DATASET_URL = {}
+    DATASET_URL = {
+        'SparBench': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/SparBench.tsv',  # noqa: E501
+        'SparBench_tiny': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/SparBench_tiny.tsv'  # noqa: E501
+    }
 
-    # DATASET_URL['SparBench'] = 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/SparBench.tsv'  # noqa: E501
-    # DATASET_URL['SparBench_tiny'] = 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/SparBench_tiny.tsv'  # noqa: E501
-
-    DATASET_URL['SparBench'] = '/mnt/aigc/wangyubo/data/UG/data/benchmark/opensource_tsv/SparBench.tsv'
-    DATASET_URL['SparBench_tiny'] = '/mnt/aigc/wangyubo/data/UG/data/benchmark/opensource_tsv/SparBench_tiny.tsv'
-
-    DATASET_MD5 = {key: None for key in DATASET_URL}
+    DATASET_MD5 = {
+        'SparBench': 'cb1e5f5855c454241e0a70c3b8152976',
+        'SparBench_tiny': 'c435e186064b795e0a9759aa60465a00'
+    }
 
     TASK_TYPES = {
         'MCQ': [

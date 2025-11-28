@@ -3,37 +3,25 @@ import string
 import pandas as pd
 
 from .image_mcq import ImageMCQDataset
-from ..smp.file import LMUDataRoot, load, getenv_bool
+from ..smp.file import load
 from ..smp.misc import toliststr
-
-
-RUISI_POST_PROMPT = (
-    "Enclose your thinking process in <think> </think> tags and your final answer in <answer> </answer>."
-)
 
 
 class MMSIBench(ImageMCQDataset):
     TYPE = 'MCQ'
 
     # VLMEvalKit officially provides an MMSI *circular* TSV.
-    # In this repo we only run the *non-circular* evaluation.
+    # In this repo we only run the *non-circular* evaluation, which aligns with the
+    # evaluation protocol described in the MMSI paper.
     # To avoid modifying upstream VLMEvalKit, we do NOT integrate the circular set here.
     # (Use the official pipeline if you need the circular split.)
-    MMSI_TASKS = [
-        'wo_circular',
-    ]
+    DATASET_URL = {
+        'MMSIBench_wo_circular': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/MMSIBench_wo_circular.tsv'  # noqa: E501
+    }
 
-    LMUData_root = LMUDataRoot()
-
-    # TODO: change this into hugging face path
-    DATASET_URL = {}
-
-    for task in MMSI_TASKS:
-        name = f"MMSIBench_{task}"
-        path = osp.join(LMUData_root, name + ".tsv")
-        DATASET_URL[name] = path
-
-    DATASET_MD5 = {key: None for key in DATASET_URL}
+    DATASET_MD5 = {
+        'MMSIBench_wo_circular': '548c5f33f1a12948d5355d5f600749e4'
+    }
 
     def _task_category(self):
         return [
@@ -50,55 +38,7 @@ class MMSIBench(ImageMCQDataset):
             "MSR"
         ]
 
-    # def build_prompt(self, line):
-    #     if isinstance(line, int):
-    #         line = self.data.iloc[line]
-
-    #     if self.meta_only:
-    #         tgt_path = toliststr(line['image_path'])
-    #     else:
-    #         tgt_path = self.dump_image(line)
-
-    #     question = line['question']
-    #     options = {
-    #         cand: line[cand]
-    #         for cand in string.ascii_uppercase
-    #         if cand in line and not pd.isna(line[cand])
-    #     }
-
-    #     # Prompt format aligned with mmsi code base
-    #     options_prompt = 'Options: '
-    #     for key, item in options.items():
-    #         options_prompt += f'{key}: {item}, '
-    #     hint = line['hint'] if ('hint' in line and not pd.isna(line['hint'])) else None
-
-    #     prompt = ''
-    #     if hint is not None:
-    #         prompt += f'Hint: {hint}\n'
-    #     prompt += f'{question}\n'
-    #     if len(options):
-    #         prompt += options_prompt
-
-    #     # MMSI Direct
-    #     post_prompt = (
-    #         "Answer with the option's letter from the given choices directly. "
-    #         "Enclose the option's letter within ``."
-    #     )
-
-    #     prompt = f'{prompt}\n{post_prompt}'
-
-    #     msgs = []
-    #     if isinstance(tgt_path, list):
-    #         msgs.extend([dict(type='image', value=p) for p in tgt_path])
-    #     else:
-    #         msgs = [dict(type='image', value=tgt_path)]
-    #     msgs.append(dict(type='text', value=prompt))
-
-    #     return msgs
-
     def build_prompt(self, line):
-        use_ruisi_prompt = getenv_bool("use_ruisi_prompt", False)
-
         if isinstance(line, int):
             line = self.data.iloc[line]
 
@@ -127,16 +67,13 @@ class MMSIBench(ImageMCQDataset):
         if len(options):
             prompt += options_prompt
 
-        if not use_ruisi_prompt:
-            # MMSI Direct
-            post_prompt = (
-                "Answer with the option's letter from the given choices directly. "
-                "Enclose the option's letter within ``."
-            )
+        # MMSI Direct
+        post_prompt = (
+            "Answer with the option's letter from the given choices directly. "
+            "Enclose the option's letter within ``."
+        )
 
-            prompt = f'{prompt}\n{post_prompt}'
-        else:
-            prompt = prompt + "\n" + RUISI_POST_PROMPT
+        prompt = f'{prompt}\n{post_prompt}'
 
         msgs = []
         if isinstance(tgt_path, list):
@@ -148,7 +85,7 @@ class MMSIBench(ImageMCQDataset):
         return msgs
 
     def evaluate(self, eval_file, **judge_kwargs):
-        from .utils.spatial_rel_bench.cal_scores import compute_mcq_score, eval_mcq_core
+        from .utils.spatial_bench.cal_scores import compute_mcq_score, eval_mcq_core
 
         return eval_mcq_core(
             load_fn=load,

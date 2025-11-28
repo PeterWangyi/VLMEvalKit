@@ -68,63 +68,33 @@ class VsiBench(VideoBaseDataset):
     TYPE = 'MCQ'
     MODALITY = 'VIDEO'
 
-    STANDARD_MCQ_SYS_PROMPT = (
-        "You are a spatial-reasoning assistant. Always ground your answer in the visual evidence; "
-        "do not hallucinate unseen objects. If uncertain, pick the most plausible option—never refuse or reply "
-        "“insufficient information.” Think step by step and provide the answer. "
-        "You should first provide a reasoning process, then provide a single option (an English letter) "
-        "as the final answer. The reasoning process and the answer are enclosed within <think></think> "
-        "and <answer></answer> tags, respectively, i.e., <think>reasoning process</think>, "
-        "<answer>answer</answer>."
-    )
+    OFFICAL_PRE_PROMPT = "These are frames of a video."
+    OFFICAL_MCQ_POST_PROMPT = "Answer with the option's letter from the given choices directly."
+    OFFICAL_VQA_POST_PROMPT = "Answer briefly and directly in one float number."
 
-    STANDARD_VQA_SYS_PROMPT = (
-        "You are a spatial-reasoning assistant. Always ground your answer in the visual evidence; "
-        "do not hallucinate unseen objects. If uncertain, pick the most plausible option—never refuse or reply "
-        "“insufficient information. Think step by step and provide the answer. "
-        "You should first provide a reasoning process, then provide one float number as the final answer. "
-        "The reasoning process and the answer are enclosed within <think></think> and <answer></answer> tags, "
-        "respectively, i.e., <think>reasoning process</think>, <answer>answer</answer>. "
-    )
+    LMUData_root = LMUDataRoot()
 
-    ORIGIN_PRE_PROMPT = "These are frames of a video."
-    ORIGIN_MCQ_POST_PROMPT = "Answer with the option's letter from the given choices directly."
-    ORIGIN_VQA_POST_PROMPT = "Answer briefly and directly in one float number."
+    DATASET_URL = {
+        'VSI-Bench': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/VSI-Bench.tsv',  # noqa: E501
+        'VSI-Bench-Debiased': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/VSI-Bench-Debiased.tsv'  # noqa: E501
+    }
+    DATASET_MD5 = {
+        'VSI-Bench': '34544fd83241391d83eff087a1be7d83',
+        'VSI-Bench-Debiased': '2a075fbc69a7725fe7f0718eafb7fca5'
+    }
 
     def __init__(self, dataset, pack=False, nframe=0, fps=-1, sample_strategy='uniform_tail'):
-        super().__init__(dataset=dataset, pack=pack, nframe=nframe, fps=fps)
-
+        self.sample_strategy = sample_strategy
         valid_strategies = {'uniform_tail', 'uniform', 'chunk_center'}
         if sample_strategy not in valid_strategies:
             raise ValueError(f"[{dataset}] Unsupported sample_strategy '{sample_strategy}'")
 
-        self.sample_strategy = sample_strategy
-        self.variant = self.get_variant(dataset)
-        print(f"VsiBench using variant : {self.variant}")
-        self.MODALITY = 'VIDEO'
-
-    def get_variant(self, name: str, default="origin"):
-        base = "VSI-Bench"
-        if not isinstance(name, str) or not name.startswith(base):
-            return None
-        # 去掉前缀与前导连接符
-        suffix = name[len(base):].lstrip("_-").strip()
-        if not suffix:
-            return default
-        # 只取最后一个段：..._origin 或 ..._standard
-        last = suffix.split("_")[-1].lower()
-        if last in {"origin", "standard"}:
-            return last
-        return default
+        super().__init__(dataset=dataset, pack=pack, nframe=nframe, fps=fps)
 
     @classmethod
     def supported_datasets(cls):
-        return [
-            'VSI-Bench_origin',
-            'VSI-Bench_standard',
-            'VSI-Bench-Debiased_origin',
-            'VSI-Bench-rel-dir_origin',
-        ]
+        subsets = ["VSI-Bench", "VSI-Bench-Debiased"]
+        return subsets
 
     def get_task_type(self, question_type):
         MCQ_items = [
@@ -150,139 +120,74 @@ class VsiBench(VideoBaseDataset):
         else:
             raise ValueError(f"Unkwon question type: {question_type}")
 
-    def prepare_dataset(self, dataset_name='VSI-Bench', repo_id='nyu-visionx/VSI-Bench'):
+    def download_vsibench(self, repo_id='nyu-visionx/VSI-Bench'):
+        cache_path = get_cache_path(repo_id)
+        SENTINEL_NAME = ".vsibench_extracted"
 
-        def check_integrity(pth):
-            data_file = osp.join(pth, f'{dataset_name}.tsv')
+        if (cache_path and os.path.isdir(cache_path)
+                and os.path.isfile(os.path.join(cache_path, SENTINEL_NAME))):
+            dataset_path = cache_path
+        else:
+            def _write_sentinel(sentinel_path, text="ok"):
+                tmp = sentinel_path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(text)
+                os.replace(tmp, sentinel_path)
 
-            if not os.path.exists(data_file):
-                return False
+            def unzip_hf_zip(pth):
+                import zipfile
 
-            if md5(data_file) != self.MD5:
-                return False
-            data = load(data_file)
-            for video_pth in data['video_path']:
-                if not osp.exists(osp.join(pth, video_pth)):
-                    return False
-            return True
+                base_dir = pth
+                zip_files = [
+                    os.path.join(base_dir, f) for f in os.listdir(base_dir)
+                    if f.endswith('.zip')
+                ]
+                zip_files.sort()
 
-        # cache_path = get_cache_path(repo_id)
+                for zip_file in tqdm(zip_files, desc='Unpacking Origin Data...'):
+                    with zipfile.ZipFile(zip_file, 'r') as zf:
+                        for info in zf.infolist():
+                            if info.is_dir():
+                                continue
 
-        # cache_path = '/mnt/aigc/shared_env/huggingface/hub/datasets--nyu-visionx--VSI-Bench/snapshots/bc96b17cb6be84878a6c1f2e64c24346356e0d04'
+                            rel = os.path.normpath(info.filename).lstrip('/\\')
+                            dst = os.path.join(pth, rel)
 
-        # print(f"hf path : {cache_path}, {check_integrity(cache_path)}")
+                            absp = os.path.abspath(pth)
+                            absd = os.path.abspath(dst)
+                            if not absd.startswith(absp + os.sep):
+                                raise RuntimeError(f'Unsafe path in zip: {info.filename}')
 
-        # if cache_path is not None and check_integrity(cache_path):
-        #     dataset_path = cache_path
-        # else:
-        #     def unzip_hf_zip(pth):
-        #         import zipfile
-        #         base_dir = pth
-        #         target_dir = os.path.join(pth, 'video/')
-        #         zip_files = [
-        #             os.path.join(base_dir, file) for file in os.listdir(base_dir)
-        #             if file.endswith('.zip')
-        #         ]
-        #         zip_files.sort()
+                            os.makedirs(os.path.dirname(dst), exist_ok=True)
+                            with zf.open(info, 'r') as src, open(dst, 'wb') as out:
+                                out.write(src.read())
 
-        #         if not os.path.exists(target_dir):
-        #             os.makedirs(target_dir, exist_ok=True)
-        #             for zip_file in zip_files:
-        #                 with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-        #                     for member in zip_ref.namelist():
-        #                         if member.endswith('/'):
-        #                             continue
+                sentinel_path = os.path.join(pth, SENTINEL_NAME)
+                _write_sentinel(sentinel_path, text="done")
+                print('VsiBench data extracted to current directory with original layout.')
 
-        #                         rel = os.path.normpath(member.lstrip("/"))
-        #                         dst = os.path.join(target_dir, rel)
-        #                         os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if modelscope_flag_set():
+                from modelscope import dataset_snapshot_download
+                dataset_path = dataset_snapshot_download(dataset_id=repo_id)
+            else:
+                dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
 
-        #                         with zip_ref.open(member) as source, open(dst, 'wb') as target:
-        #                             target.write(source.read())
-        #             print('The video file has been restored and stored from the zip file.')
-        #         else:
-        #             print('The video file already exists.')
+            unzip_hf_zip(dataset_path)
 
-        #     def to_candidates(x):
-        #         if x is None or (isinstance(x, float) and math.isnan(x)):
-        #             return []
-        #         if isinstance(x, list):
-        #             return x
-        #         if isinstance(x, (tuple, set)):
-        #             return list(x)
-        #         if hasattr(x, "tolist"):
-        #             try:
-        #                 return x.tolist()
-        #             except Exception:
-        #                 pass
-        #         if isinstance(x, str):
-        #             try:
-        #                 v = json.loads(x)
-        #                 return v if isinstance(v, list) else [v]
-        #             except Exception:
-        #                 return [x]
-        #         return [x]
+        return dataset_path
 
-        #     def generate_tsv(pth):
+    def prepare_dataset(self, dataset_name):
+        url = self.DATASET_URL[dataset_name]
+        md5 = self.DATASET_MD5[dataset_name]
 
-        #         data_file = osp.join(pth, f'{dataset_name}.tsv')
-        #         if os.path.exists(data_file) and md5(data_file) == self.MD5:
-        #             return
+        _ = super().prepare_tsv(url, md5)
 
-        #         data_file = pd.read_parquet(os.path.join(pth, 'test-00000-of-00001.parquet'))
-        #         data_file = data_file.assign(index=range(len(data_file)))
+        dataset_path = self.download_vsibench()
+        self.dataset_path = dataset_path
 
-        #         data_file['index'] = data_file['id']
-        #         data_file["video"] = (
-        #             data_file["dataset"].astype(str).str.rstrip("/")
-        #             + "/" +
-        #             data_file["scene_name"].astype(str).str.removesuffix(".mp4")
-        #             + ".mp4"
-        #         )
-        #         data_file['candidates'] = data_file['options'].apply(to_candidates)
-        #         data_file['question'] = data_file['question']
-        #         data_file['answer'] = data_file['ground_truth']
-        #         data_file['question_type'] = data_file['question_type']
+        variant_data_file = os.path.join(self.LMUData_root, f"{dataset_name}.tsv")
 
-        #         out_cols = ["index", "video", "candidates",
-        #                     "question", "answer", "question_type"]
-
-        #         data_file[out_cols].to_csv(osp.join(pth, f'{dataset_name}.tsv'), sep="\t", index=False)
-
-        #     if modelscope_flag_set():
-        #         from modelscope import dataset_snapshot_download
-        #         dataset_path = dataset_snapshot_download(dataset_id=repo_id)
-        #     else:
-        #         dataset_path = snapshot_download(repo_id=repo_id, repo_type='dataset')
-        #     unzip_hf_zip(dataset_path)
-        #     generate_tsv(dataset_path)
-
-        # data_file = osp.join(dataset_path, f'{dataset_name}.tsv')
-
-        data_file = '/mnt/aigc/shared_env/huggingface/hub/datasets--nyu-visionx--VSI-Bench/snapshots/bc96b17cb6be84878a6c1f2e64c24346356e0d04/VSI-Bench_origin.tsv'
-        dataset_path = '/mnt/aigc/shared_env/huggingface/hub/datasets--nyu-visionx--VSI-Bench/snapshots/bc96b17cb6be84878a6c1f2e64c24346356e0d04'
-
-        vsi_debiased = getenv_bool("vsi_debiased", False)
-
-        print(f"------------------ vsi_debiased:{vsi_debiased} ---------------------------------")
-        if vsi_debiased:
-
-            print(f"------------------ using VSI Debiased ---------------------------------")
-
-            data_file = '/mnt/aigc/wangyubo/data/UG/data/benchmark/opensource_tsv/VSI-Bench-Debiased_origin.tsv'
-            dataset_path = '/mnt/aigc/shared_env/huggingface/hub/datasets--nyu-visionx--VSI-Bench/snapshots/bc96b17cb6be84878a6c1f2e64c24346356e0d04'
-
-        vsi_rel_dir = getenv_bool("vsi_rel_dir", False)
-        print(f"------------------ vsi_rel_dir:{vsi_rel_dir} ---------------------------------")
-        if vsi_rel_dir:
-
-            print(f"------------------ using VSI vsi_rel_dir ---------------------------------")
-
-            data_file = '/mnt/aigc/wangyubo/data/UG/data/benchmark/opensource_tsv/VSI-Bench-rel-dir_origin.tsv'
-            dataset_path = '/mnt/aigc/shared_env/huggingface/hub/datasets--nyu-visionx--VSI-Bench/snapshots/bc96b17cb6be84878a6c1f2e64c24346356e0d04'
-
-
-        return dict(data_file=data_file, root=dataset_path)
+        return dict(data_file=variant_data_file, root=dataset_path)
 
     def save_video_frames(self, video_path, video_llm=False):
         vid_path = osp.join(self.data_root, 'video', video_path)
@@ -337,50 +242,7 @@ class VsiBench(VideoBaseDataset):
 
         return frame_paths, indices, video_info
 
-    # def build_prompt(self, line, video_llm):
-    #     if isinstance(line, int):
-    #         assert line < len(self)
-    #         line = self.data.iloc[line]
-
-    #     question = line['question']
-    #     question_type = str(line['question_type'])
-    #     task_type = self.get_task_type(question_type)
-
-    #     if task_type == "MCQ":
-    #         options = ast.literal_eval(line['candidates'])
-    #         formatted_options = '\n'.join(options)
-
-    #     # use vsi origin prompt
-    #     if self.variant == 'origin':
-    #         if task_type == 'MCQ':
-    #             prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, formatted_options, self.ORIGIN_MCQ_POST_PROMPT])
-    #         else:
-    #             prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, self.ORIGIN_VQA_POST_PROMPT])
-    #     else:
-    #         if task_type == 'MCQ':
-    #             prompt = "\n".join([self.STANDARD_MCQ_SYS_PROMPT, question, formatted_options])
-    #         else:
-    #             prompt = "\n".join([self.STANDARD_VQA_SYS_PROMPT, question])
-
-    #     message = []
-
-    #     if video_llm:
-    #         message.append(dict(type='video', value=osp.join(self.data_root, 'video', line['video'])))
-    #     else:
-    #         frames, _, _ = self.save_video_frames(line['video'], video_llm)
-    #         for im in frames:
-    #             message.append(dict(type='image', value=im))
-
-    #     message.append(dict(type='text', value=prompt))
-
-    #     # print(f"message: {message}")
-
-    #     return message
-
     def build_prompt(self, line, video_llm):
-        use_ruisi_prompt = getenv_bool("use_ruisi_prompt", False)
-        use_cgmap = getenv_bool("use_cgmap", False)
-
         if isinstance(line, int):
             assert line < len(self)
             line = self.data.iloc[line]
@@ -393,56 +255,29 @@ class VsiBench(VideoBaseDataset):
             options = ast.literal_eval(line['candidates'])
             formatted_options = '\n'.join(options)
 
-        # use vsi origin prompt
-        if self.variant == 'origin':
-            if task_type == 'MCQ':
-                if not use_ruisi_prompt:
-                    prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, formatted_options, self.ORIGIN_MCQ_POST_PROMPT])
-                else:
-                    prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, formatted_options, RUISI_POST_PROMPT])
-            else:
-                if not use_ruisi_prompt:
-                    prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, self.ORIGIN_VQA_POST_PROMPT])
-                else:
-                    prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, RUISI_NA_POST_PROMPT])
+        # following vsi prompt format
+        prompt_lst = [self.OFFICAL_PRE_PROMPT, question]
+        if task_type == 'MCQ':
+            prompt_lst += [formatted_options, self.OFFICAL_MCQ_POST_PROMPT]
         else:
-            if task_type == 'MCQ':
-                prompt = "\n".join([self.STANDARD_MCQ_SYS_PROMPT, question, formatted_options])
-            else:
-                prompt = "\n".join([self.STANDARD_VQA_SYS_PROMPT, question])
-
-        if use_cgmap:
-            if task_type == 'MCQ':
-                question = f"[Question]\n{question}"
-                prompt = "\n".join([AUG_CG_MAP, question, formatted_options])
-                # print(f"prompt: {prompt}")
-            else:
-                prompt = "\n".join([self.ORIGIN_PRE_PROMPT, question, self.ORIGIN_VQA_POST_PROMPT])
+            prompt_lst += [self.OFFICAL_VQA_POST_PROMPT]
+        prompt = '\n'.join(prompt_lst)
 
         message = []
 
-        peter_test = getenv_bool("peter_test", False)
-
         if video_llm:
-            if peter_test:
-                pass
-            else:
-                message.append(dict(type='video', value=osp.join(self.data_root, 'video', line['video'])))
+            message.append(dict(type='video', value=osp.join(self.data_root, 'video', line['video'])))
         else:
-            if peter_test:
-                pass
-            else:
-                frames, _, _ = self.save_video_frames(line['video'], video_llm)
-                for im in frames:
-                    message.append(dict(type='image', value=im))
+            frames, _, _ = self.save_video_frames(line['video'], video_llm)
+            for im in frames:
+                message.append(dict(type='image', value=im))
 
         message.append(dict(type='text', value=prompt))
 
         return message
 
-
     def evaluate(self, eval_file, **judge_kwargs):
-        from .utils.spatial_rel_bench.cal_scores import compute_mcq_score, compute_na_score
+        from .utils.spatial_bench.cal_scores import compute_mcq_score, compute_na_score
 
         suffix = eval_file.split('.')[-1]
         result_file = eval_file.replace(f'.{suffix}', f'_result.pkl')
@@ -528,16 +363,8 @@ class VsiBench(VideoBaseDataset):
                 [(k, v) for k, v in summary.items() if k not in ('tabulated_keys', 'tabulated_results')],
                 columns=["metric", "value"]
             )
-            # acc_df.to_csv(acc_tsv_path, sep="\t", index=False)
-            # print(f"[save] accuracy table saved to {acc_tsv_path}")
-
-            # 横向一行：列=metric
-            wide = acc_df.set_index("metric").T
-            wide.index = [""]  # 去掉行索引名字
-
-            wide.to_csv(acc_tsv_path, sep="\t", index=False, float_format="%.4f")
-            print(f"[save] accuracy table saved to {acc_tsv_path} (wide)")
-
+            acc_df.to_csv(acc_tsv_path, sep="\t", index=False)
+            print(f"[save] accuracy table saved to {acc_tsv_path}")
         except Exception as e:
             warnings.warn(f"[save] failed to save acc tsv to {acc_tsv_path}: {e}")
 

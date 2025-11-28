@@ -17,25 +17,17 @@ RUISI_POST_PROMPT = (
 class MindCubeBench(ImageMCQDataset):
     TYPE = 'MCQ'
 
-    MINDCUBE_TASKS = [
-        'raw_qa',
-        'tiny_raw_qa',
-        'tiny_raw_qa_circular',
-        'tiny_aug_cgmap_ffr_out'
-    ]
-
     LMUData_root = LMUDataRoot()
     DATASET_URL = {}
 
-    # #TODO:change this to hugging face path after upload
     DATASET_URL = {
-        "MindCubeBench_tiny_raw_qa": "https://huggingface.co/datasets/y-playground/EASI_Mindcube/resolve/main/MindCubeBench_tiny_raw_qa.tsv",  # noqa: E501
-        "MindCubeBench_raw_qa": f"{os.path.join(LMUData_root, 'MindCubeBench_raw_qa.tsv')}",
-        "MindCubeBench_tiny_raw_qa_circular": f"{os.path.join(LMUData_root, 'MindCubeBench_tiny_raw_qa_circular.tsv')}",  # noqa: E501
-        "MindCubeBench_tiny_aug_cgmap_ffr_out": f"{os.path.join(LMUData_root, 'MindCubeBench_tiny_aug_cgmap_ffr_out.tsv')}"  # noqa: E501
+        'MindCubeBench_tiny_raw_qa': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/MindCubeBench_tiny_raw_qa.tsv',  # noqa: E501
+        'MindCubeBench_raw_qa': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/MindCubeBench_raw_qa.tsv'  # noqa: E501
     }
-
-    DATASET_MD5 = {key: None for key in DATASET_URL}
+    DATASET_MD5 = {
+        'MindCubeBench_tiny_raw_qa': '35f69fc30d7c2d2880417ce0769f5347',
+        'MindCubeBench_raw_qa': '6a53cd353bc93d8e3a87098249c806ad'
+    }
 
     def _task_category(self):
         return ['rotation', 'among', 'around']
@@ -46,8 +38,8 @@ class MindCubeBench(ImageMCQDataset):
         SENTINEL_NAME = ".mindcubebench_extracted"
         cache_path = get_cache_path(repo_id)
 
-        sentinel_path = os.path.join(cache_path, SENTINEL_NAME)
-        if cache_path and os.path.isfile(sentinel_path):
+        if (cache_path and os.path.isdir(cache_path)
+                and os.path.isfile(os.path.join(cache_path, SENTINEL_NAME))):
             dataset_path = cache_path
         else:
             def _write_sentinel(sentinel_path, text="ok"):
@@ -84,6 +76,7 @@ class MindCubeBench(ImageMCQDataset):
                             with zf.open(info, 'r') as src, open(dst, 'wb') as out:
                                 out.write(src.read())
 
+                sentinel_path = os.path.join(pth, SENTINEL_NAME)
                 _write_sentinel(sentinel_path, text="done")
                 print('MindCube data extracted to current directory with original layout.')
 
@@ -105,7 +98,7 @@ class MindCubeBench(ImageMCQDataset):
 
                 if not dataset_path:
                     return os.path.normpath(s)
-                return os.path.normpath(os.path.join(dataset_path, 'data', s.lstrip(r'\/')))
+                return os.path.normpath(os.path.join(dataset_path, s.lstrip(r'\/')))
 
             def to_abs(p):
                 if isinstance(p, list):
@@ -186,7 +179,7 @@ class MindCubeBench(ImageMCQDataset):
         return [s for s in segs if s['value']]
 
     def evaluate(self, eval_file, **judge_kwargs):
-        from .utils.spatial_rel_bench.cal_scores import compute_mcq_score, eval_mcq_core
+        from .utils.spatial_bench.cal_scores import compute_mcq_score, eval_mcq_core
 
         return eval_mcq_core(
             load_fn=load,

@@ -13,14 +13,9 @@ from collections import OrderedDict
 from huggingface_hub import snapshot_download
 
 from ..smp.misc import toliststr, get_cache_path, modelscope_flag_set
-from ..smp.file import LMUDataRoot, dump, load, getenv_bool
+from ..smp.file import LMUDataRoot, dump, load
 from .video_base import VideoBaseDataset
 from .image_mcq import ImageMCQDataset
-
-
-RUISI_POST_PROMPT = (
-    "Enclose your thinking process in <think> </think> tags and your final answer in <answer> </answer>."
-)
 
 
 class SiteBenchBase:
@@ -95,7 +90,7 @@ class SiteBenchBase:
         return dataset_path
 
     def evaluate(self, eval_file, **kwargs):
-        from .utils.spatial_rel_bench.cal_scores import compute_mcq_score, compute_caa_score
+        from .utils.spatial_bench.cal_scores import compute_mcq_score, compute_caa_score
 
         suffix = eval_file.split('.')[-1]
         result_file = eval_file.replace(f'.{suffix}', '_result.pkl')
@@ -172,18 +167,10 @@ class SiteBenchBase:
 
             metric_order += [k for k in acc_df['metric'].tolist() if k not in metric_order]
 
-            # acc_df = acc_df.set_index('metric').reindex(metric_order).reset_index()
-            # acc_df = acc_df.dropna(subset=['value'])
-            # acc_df.to_csv(acc_tsv_path, sep='\t', index=False)
-            # print(f"[save] accuracy/CAA table saved to {acc_tsv_path}")
-
-            # 先按顺序对齐，再转置为一行
-            acc_df = acc_df.set_index('metric').reindex(metric_order).dropna(subset=['value'])
-            wide = acc_df.T                             # 列 = metric，只有一行
-            wide.to_csv(acc_tsv_path, sep='\t', index=False, float_format='%.4f')
-
-            print(f"[save] accuracy/CAA table saved to {acc_tsv_path} (wide)")
-
+            acc_df = acc_df.set_index('metric').reindex(metric_order).reset_index()
+            acc_df = acc_df.dropna(subset=['value'])
+            acc_df.to_csv(acc_tsv_path, sep='\t', index=False)
+            print(f"[save] accuracy/CAA table saved to {acc_tsv_path}")
         except Exception as e:
             warnings.warn(f"[save] failed to save acc tsv to {acc_tsv_path}: {e}")
 
@@ -194,14 +181,13 @@ class SiteBenchBase:
 class SiteBenchImage(SiteBenchBase, ImageMCQDataset):
     TYPE = 'MCQ'
 
-    LMUData_root = LMUDataRoot()
+    DATASET_URL = {
+        "SiteBenchImage": "https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/SiteBenchImage.tsv"  # noqa: E501
+    }
 
-    DATASET_URL = {}
-
-    # TODO: change this into hugging face url
-    DATASET_URL["SiteBenchImage"] = os.path.join(LMUData_root, "SiteBenchImage.tsv")
-
-    DATASET_MD5 = {key: None for key in DATASET_URL}
+    DATASET_MD5 = {
+        "SiteBenchImage": "59a2ada248b743c1d7b2f89dd5afcdc3"
+    }
 
     def prepare_tsv(self, url, file_md5=None):
         data = super().prepare_tsv(url, file_md5)
@@ -236,51 +222,7 @@ class SiteBenchImage(SiteBenchBase, ImageMCQDataset):
 
         return data
 
-    # def build_prompt(self, line):
-
-    #     if isinstance(line, int):
-    #         line = self.data.iloc[line]
-
-    #     if self.meta_only:
-    #         tgt_path = toliststr(line['image_path'])
-    #     else:
-    #         tgt_path = self.dump_image(line)
-
-    #     question = line['question']
-    #     question = "Question:" + question
-
-    #     prompt = ""
-    #     UpperLetters = list(string.ascii_uppercase)
-
-    #     question = line['question']
-    #     options = line['options']
-
-    #     if isinstance(options, str):
-    #         try:
-    #             options = json.loads(options)
-    #         except Exception:
-    #             options = ast.literal_eval(options)
-
-    #     option_text = "\n".join(
-    #         f"{UpperLetters[i]}: {options[i]}"
-    #         for i in range(len(options))
-    #     )
-
-    #     if "<image>" not in question and "<image>" not in option_text:
-    #         prompt += "<image>" * len(tgt_path) + "\n"
-
-    #     # prompt format align with site paper
-    #     prompt += "Question: " + question + "\n"
-    #     prompt += "Options:\n" + option_text + "\n"
-    #     post_prompt = "Give me the answer letter directly. The best answer is:"
-    #     prompt += post_prompt
-
-    #     msgs = self.build_msgs(tgt_path, prompt)
-
-    #     return msgs
-
     def build_prompt(self, line):
-        use_ruisi_prompt = getenv_bool("use_ruisi_prompt", False)
 
         if isinstance(line, int):
             line = self.data.iloc[line]
@@ -316,12 +258,8 @@ class SiteBenchImage(SiteBenchBase, ImageMCQDataset):
         # prompt format align with site paper
         prompt += "Question: " + question + "\n"
         prompt += "Options:\n" + option_text + "\n"
-
-        if not use_ruisi_prompt:
-            post_prompt = "Give me the answer letter directly. The best answer is:"
-            prompt += post_prompt
-        else:
-            prompt += RUISI_POST_PROMPT
+        post_prompt = "Give me the answer letter directly. The best answer is:"
+        prompt += post_prompt
 
         msgs = self.build_msgs(tgt_path, prompt)
 
@@ -332,18 +270,7 @@ class SiteBenchImage(SiteBenchBase, ImageMCQDataset):
         """
         Interlaced text and pictures
         """
-        cambrian_test = getenv_bool("cambrian_test", False)
-
         images = tgt_path if isinstance(tgt_path, list) else [tgt_path]
-
-        # ✅ 只加这一段：cambrian_test 时把图全放前面、文本在最后（去掉占位符）
-        if cambrian_test:
-            text = (prompt or "").replace("<image>", "").strip()
-            segs = [{"type": "image", "value": im} for im in images if im]
-            if text:
-                segs.append({"type": "text", "value": text})
-            return segs
-        # ✅ 到此为止，下面保持你原来的交错逻辑不变
 
         parts = prompt.split('<image>')
         segs = []
@@ -362,16 +289,16 @@ class SiteBenchVideo(SiteBenchBase, VideoBaseDataset):
 
     MD5 = ''
 
-    TYPE = 'MCQ'
+    TYPE = 'Video-MCQ'
     MODALITY = 'VIDEO'
+
     LMUData_root = LMUDataRoot()
-
-    DATASET_URL = {}
-
-    # TODO: change this into hugging face url
-    DATASET_URL["SiteBenchVideo"] = os.path.join(LMUData_root, "SiteBenchVideo.tsv")
-
-    DATASET_MD5 = {key: None for key in DATASET_URL}
+    DATASET_URL = {
+        'SiteBenchVideo': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/SiteBenchVideo.tsv'  # noqa: E501
+    }
+    DATASET_MD5 = {
+        'SiteBenchVideo': 'bb2ac531fa83cf8280b23c25d738922d'
+    }
 
     def __init__(self, dataset='SiteBenchVideo', pack=False, nframe=0, fps=-1):
         super().__init__(dataset=dataset, pack=pack, nframe=nframe, fps=fps)
@@ -446,46 +373,7 @@ class SiteBenchVideo(SiteBenchBase, VideoBaseDataset):
 
         return frame_paths, indices, video_info
 
-    # def build_prompt(self, line, video_llm):
-    #     if isinstance(line, int):
-    #         assert line < len(self)
-    #         line = self.data.iloc[line]
-
-    #     question = line['question']
-    #     raw_options = ast.literal_eval(line['candidates'])
-
-    #     option_labels = list(string.ascii_uppercase)
-    #     assert len(raw_options) <= len(option_labels), "Too many options, extend option_labels if needed"
-
-    #     options = [f"{label}: {opt}" for label, opt in zip(option_labels, raw_options)]
-    #     formatted_options = '\n'.join(options)
-
-    #     # video prompt from site paper
-    #     pre_prompt = (
-    #         "Select the best answer to the following multiple-choice question based on the video. "
-    #         "Respond with only the letter of the correct option."
-    #     )
-    #     post_prompt = 'Give me the answer letter directly. The best answer is:'
-
-    #     question_text = "Question: " + question + "\n"
-    #     option_text = "Options:\n" + formatted_options + "\n"
-
-    #     prompt = pre_prompt + "\n" + question_text + option_text + post_prompt
-
-    #     message = []
-    #     if video_llm:
-    #         message.append(dict(type='video', value=line['video']))
-    #     else:
-    #         frames, _, _ = self.save_video_frames(line['video'], video_llm)
-    #         for im in frames:
-    #             message.append(dict(type='image', value=im))
-
-    #     message.append(dict(type='text', value=prompt))
-    #     return message
-
     def build_prompt(self, line, video_llm):
-        use_ruisi_prompt = getenv_bool("use_ruisi_prompt", False)
-
         if isinstance(line, int):
             assert line < len(self)
             line = self.data.iloc[line]
@@ -509,10 +397,7 @@ class SiteBenchVideo(SiteBenchBase, VideoBaseDataset):
         question_text = "Question: " + question + "\n"
         option_text = "Options:\n" + formatted_options + "\n"
 
-        if not use_ruisi_prompt:
-            prompt = pre_prompt + "\n" + question_text + option_text + post_prompt
-        else:
-            prompt = pre_prompt + "\n" + question_text + option_text + RUISI_POST_PROMPT
+        prompt = pre_prompt + "\n" + question_text + option_text + post_prompt
 
         message = []
         if video_llm:

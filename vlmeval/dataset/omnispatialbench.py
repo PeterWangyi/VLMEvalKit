@@ -11,7 +11,8 @@ from .image_mcq import ImageMCQDataset
 from ..smp.file import load
 from ..smp.misc import toliststr, get_cache_path
 
-
+# Prompt template adapted from the official OmniSpatial codebase:
+# https://github.com/qizekun/OmniSpatial/tree/main
 RE_FORMAT = """
 End your answer with a separate line formatted exactly as:
 
@@ -78,14 +79,22 @@ If uncertain, pick the most plausible option—never refuse or reply “insuffic
 class OmniSpatialBench(ImageMCQDataset):
     TYPE = 'MCQ'
 
-    DATASET_URL = {
-        'OmniSpatialBench': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/OmniSpatialBench.tsv',  # noqa: E501
-        'OmniSpatialBench_default': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/OmniSpatialBench.tsv',  # noqa: E501
-        'OmniSpatialBench_zeroshot_cot': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/OmniSpatialBench.tsv',  # noqa: E501
-        'OmniSpatialBench_manual_cot': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/OmniSpatialBench.tsv',  # noqa: E501
-    }
+    OMNI_TSV_URL = 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/OmniSpatialBench.tsv'
+    OMNI_TSV_URL = '5d0896fc57c452055b020cc309ed799b'
 
-    DATASET_MD5 = {key: None for key in DATASET_URL}
+    VARIANTS = [
+        'OmniSpatialBench',
+        'OmniSpatialBench_default',
+        'OmniSpatialBench_zeroshot_cot',
+        'OmniSpatialBench_manual_cot',
+    ]
+
+    DATASET_URL = {}
+    DATASET_MD5 = {}
+
+    for name in VARIANTS:
+        DATASET_URL[name] = OMNI_TSV_URL
+        DATASET_MD5[name] = OMNI_TSV_URL
 
     SYS_PROMPTS = {
         "default": DEFAULT_SYSTEM_PROMPT,
@@ -239,7 +248,7 @@ class OmniSpatialBench(ImageMCQDataset):
         return msgs
 
     def evaluate(self, eval_file, **judge_kwargs):
-        from .utils.spatial_rel_bench.cal_scores import compute_mcq_score, eval_mcq_core
+        from .utils.spatial_bench.cal_scores import compute_mcq_score, eval_mcq_core
 
         raw = eval_mcq_core(
             load_fn=load,

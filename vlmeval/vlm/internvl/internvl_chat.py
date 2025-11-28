@@ -119,7 +119,7 @@ class InternVLChat(BaseModel):
 
     def __init__(self,
                  model_path='OpenGVLab/InternVL-Chat-V1-5',
-                 use_custom_prompt: bool = True,
+                 use_custom_prompt=True,
                  load_in_8bit=False,
                  use_mpo_prompt=False,
                  version='V1.0',
@@ -211,6 +211,7 @@ class InternVLChat(BaseModel):
             torch.cuda.set_device(0)
             self.device = 'cuda'
         else:
+            # TODO: check transformers version
             self.model = AutoModel.from_pretrained(
                 self.model_path,
                 torch_dtype=torch.bfloat16,
@@ -226,6 +227,7 @@ class InternVLChat(BaseModel):
 
             self.reward_tokenizer = AutoTokenizer.from_pretrained(
                 reward_model_path, trust_remote_code=True, use_fast=False)
+            # TODO: check transformers version
             self.reward_model = AutoModel.from_pretrained(
                 reward_model_path,
                 torch_dtype=torch.bfloat16,
@@ -252,6 +254,13 @@ class InternVLChat(BaseModel):
 
     def use_custom_prompt(self, dataset):
         if not self._use_custom_prompt:
+            return False
+
+        assert dataset is not None
+        if dataset in [
+            'atomic_dataset', 'electro_dataset', 'mechanics_dataset',
+            'optics_dataset', 'quantum_dataset', 'statistics_dataset'
+        ]:
             return False
 
         return False
