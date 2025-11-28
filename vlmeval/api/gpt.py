@@ -242,7 +242,7 @@ class OpenAIWrapper(BaseAPI):
                         parts.append({"text": c.get("text", "")})
 
                     # 来自 prepare_itlist 的图片项：{
-                        # "type": "image_url", 
+                        # "type": "image_url",
                         # "image_url": {"url": "data:image/jpeg;base64,...", "detail": ...}
                     # }
                     elif isinstance(c, dict) and c.get("type") == "image_url":
