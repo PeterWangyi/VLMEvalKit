@@ -240,7 +240,6 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
                   the fps/nframe setting in video dataset is omitted")
         self.use_audio_in_video = use_audio_in_video
         self.FRAME_FACTOR = 2
-
         assert model_path is not None
 
         if not os.path.exists(model_path):
@@ -257,7 +256,7 @@ class Qwen2VLChat(Qwen2VLPromptMixin, BaseModel):
         print(f"Using Qwen25 ckpt from : {self.model_path}")
 
         self.model_path = model_path
-        
+
         MODEL_CLS = None
 
         cfg_json_path = os.path.join(self.model_path, 'config.json')
