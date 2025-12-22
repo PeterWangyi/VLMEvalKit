@@ -66,7 +66,7 @@ from .videott import VideoTT
 from .worldsense import WorldSense
 from .qbench_video import QBench_Video, QBench_Video_MCQ, QBench_Video_VQA
 from .sitebench import SiteBenchVideo
-from .vsibench import VsiBench
+from .vsibench import VsiBench, VsiSuperRecall, VsiSuperCount
 from .mmsibench import MMSIVideoBench
 
 from .cmmmu import CMMMU
@@ -266,7 +266,7 @@ VIDEO_DATASET = [
 ]
 
 # add by EASI team
-VIDEO_DATASET += [SiteBenchVideo, VsiBench, MMSIVideoBench]
+VIDEO_DATASET += [SiteBenchVideo, VsiBench, MMSIVideoBench, VsiSuperRecall, VsiSuperCount]
 
 TEXT_DATASET = [
     TextMCQDataset
