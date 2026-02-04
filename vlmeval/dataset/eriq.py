@@ -10,7 +10,7 @@ from huggingface_hub import snapshot_download
 
 class ERIQBench(ImageMCQDataset):
     """
-    MindCube.
+    ERIQ.
 
     Reference:
       Unified Embodied VLM Reasoning with Robotic Action via Autoregressive Discretized Pre-training
@@ -79,10 +79,10 @@ class ERIQBench(ImageMCQDataset):
                 s = x.strip()
                 s = os.path.expanduser(os.path.expandvars(s))
 
-                image_root = os.path.join(dataset_path, 'images')
-
                 if not dataset_path:
                     return os.path.normpath(s)
+                image_root = os.path.join(dataset_path, 'images')
+
                 return os.path.normpath(os.path.join(image_root, s.lstrip(r'\/')))
 
             def to_abs(p):
