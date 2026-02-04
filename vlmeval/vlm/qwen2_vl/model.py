@@ -861,7 +861,7 @@ class Qwen2VLChat_SingleCard(Qwen2VLChat):
         vst_test = getenv_bool("vst_test", False)
         if vst_test:
             self.generate_kwargs = dict(
-                max_new_tokens=256,
+                max_new_tokens=1024,
                 top_p=0.001,
                 temperature=0.1,
                 repetition_penalty=1.05,

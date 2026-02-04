@@ -94,13 +94,16 @@ class SpatialMLLM(Qwen2VLPromptMixin, BaseModel):
         self.max_num_frames = max_num_frames
         self.use_custom_prompt_flag = False
         self.post_process = post_process
+        
+        
+        self.device = 'cuda:0'
 
         # Initialize model and processor
         try:
             self.model = Qwen2_5_VL_VGGTForConditionalGeneration.from_pretrained(
                 model_path,
                 torch_dtype="bfloat16",
-                device_map="auto",
+                device_map=self.device,
                 attn_implementation="flash_attention_2"
             )
             self.processor = Qwen2_5_VLProcessor.from_pretrained(model_path)

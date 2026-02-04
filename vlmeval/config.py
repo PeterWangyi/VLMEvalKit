@@ -1855,6 +1855,16 @@ zoe_api_model = {
         retry=5,
         verbose=True,
     ),
+    "gpt-5.2-2025-12-12_proxy": partial(
+        GPT4V,
+        model="gpt-5.2-2025-08-07",
+        api_base="https://genaiapi.cloudsway.net/v1/ai/ngCfYIlfyQnYNVmT/chat/completions",
+        img_detail="high",
+        retry=3,
+        verbose=False,
+        max_tokens=2**14,
+        timeout=900,
+    ),
     # Grok4
     "grok-4-0709_proxy": partial(
         GPT4V,
@@ -1862,7 +1872,7 @@ zoe_api_model = {
         api_base="https://genaiapi.cloudsway.net/v1/ai/hYFoNhEUtIatHJSP/chat/completions",
         temperature=0,
         retry=3,
-        timeout=60, 
+        timeout=180, 
         max_tokens=2048,
         verbose=True,
     ),
@@ -1881,11 +1891,11 @@ zoe_api_model = {
     "gemini-3-pro-preview": partial(
         GPT4V,
         model="gemini-3-pro-preview",
-        api_base="https://api.ppchat.vip/v1beta/models/gemini-3-pro-preview:generateContent",
+        api_base="https://genaiapi.cloudsway.net/v1/ai/wMuvbnNXgTMUERFh/chat/completions",
         temperature=0,
         retry=3,
         timeout=1100, 
-        max_tokens=2048,
+        max_tokens=65536,
         verbose=True,
     ),
     
