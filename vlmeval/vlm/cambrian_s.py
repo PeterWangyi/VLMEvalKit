@@ -5,42 +5,9 @@ from typing import List, Dict, Union, Optional, Tuple
 import numpy as np
 import torch
 from PIL import Image
-from .base import BaseModel
 from decord import VideoReader, cpu
-from types import MethodType
 
-def _process_video_with_decord(video_path: str, video_fps: int, video_max_frames: int,
-                               video_force_sample: bool, num_threads: int = -1) -> Tuple[List[Image.Image], List[int]]:
-    vr = VideoReader(video_path, ctx=cpu(0)) if num_threads < 1 else VideoReader(video_path, ctx=cpu(0), num_threads=num_threads)
-    total = len(vr)
-    src_fps = float(vr.get_avg_fps()) if vr.get_avg_fps() else 30.0
-    step = max(1, int(round(src_fps / max(1, video_fps))))
-    idx = list(range(0, total, step))
-    if video_max_frames > 0 and (len(idx) > video_max_frames or video_force_sample):
-        idx = np.linspace(0, total - 1, video_max_frames, dtype=int).tolist()
-    frames_np = vr.get_batch(idx).asnumpy()
-    vr.seek(0)
-    return [Image.fromarray(frames_np[i], mode="RGB") for i in range(frames_np.shape[0])], idx
-
-
-def is_video_file(x) -> bool:
-    if isinstance(x, Image.Image):
-        return False
-    video_exts = {".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm"}
-    if not isinstance(x, str):
-        return False
-    _, ext = os.path.splitext(x)
-    return ext.lower() in video_exts
-
-
-def is_image_file(x) -> bool:
-    if isinstance(x, Image.Image):
-        return True
-    image_exts = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".webp"}
-    if not isinstance(x, str):
-        return False
-    _, ext = os.path.splitext(x)
-    return ext.lower() in image_exts
+from .base import BaseModel
 
 
 class CambrianS(BaseModel):
@@ -116,7 +83,7 @@ class CambrianS(BaseModel):
         self.DEFAULT_IM_END_TOKEN = DEFAULT_IM_END_TOKEN
         self.conv_templates = conv_templates
 
-        self.device = "cuda:0"
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         model_name = self.get_model_name_from_path(model_path)
         self.tokenizer, self.model, self.image_processor, self.max_length = load_pretrained_model(
@@ -164,11 +131,8 @@ class CambrianS(BaseModel):
 
         return target_fps, max_frames
 
-    def _process_video_with_decord(self, video_file: str, num_threads: int = -1):
-        if num_threads < 1:
-            vr = VideoReader(video_file, ctx=cpu(0))
-        else:
-            vr = VideoReader(video_file, ctx=cpu(0), num_threads=num_threads)
+    def _process_video_with_decord(self, video_file: str, num_threads: int = 0):
+        vr = VideoReader(video_file, ctx=cpu(0), num_threads=num_threads)
 
         total_frame_num = len(vr)
         fps = float(vr.get_avg_fps()) if vr.get_avg_fps() else 30.0
@@ -196,7 +160,7 @@ class CambrianS(BaseModel):
         num_frames_to_sample = len(frame_idx)
         return video, video_time, frame_time_str, num_frames_to_sample
 
-    def _process_videos(self, videos: List[str], num_threads: int = -1):
+    def _process_videos(self, videos: List[str]):
         processor_aux_list = self.image_processor
         if not isinstance(processor_aux_list, (list, tuple)):
             processor_aux_list = [processor_aux_list]
@@ -206,9 +170,7 @@ class CambrianS(BaseModel):
         last_meta = None
 
         for video_path in videos:
-            video_np, video_time, frame_time, num_frames_to_sample = self._process_video_with_decord(
-                video_path, num_threads=num_threads
-            )
+            video_np, video_time, frame_time, num_frames_to_sample = self._process_video_with_decord(video_path)
             last_meta = (video_time, frame_time, num_frames_to_sample)
 
             T, H, W, _ = video_np.shape
@@ -250,8 +212,6 @@ class CambrianS(BaseModel):
         image_items = []
         text_items = []
 
-        print(f"message: {message}")
-
         for m in message:
             if "type" in m and "value" in m:
                 mtype, mval = m["type"], m["value"]
@@ -292,10 +252,7 @@ class CambrianS(BaseModel):
 
             visuals = [vpath]
 
-            num_threads = -1
-            visual_tensors, visual_sizes, _ = self._process_videos(
-                visuals, num_threads=num_threads
-            )
+            visual_tensors, visual_sizes, _ = self._process_videos(visuals)
 
             qs = contexts
             if self.model_config.mm_use_im_start_end:
@@ -426,118 +383,3 @@ class CambrianS(BaseModel):
 
     def chat_inner(self, message: Union[str, List[Dict]], dataset: Optional[str] = None) -> str:
         return self.generate_inner(message, dataset)
-
-
-class CambrianS_SingleCard(CambrianS):
-    INSTALL_REQ = True
-    INTERLEAVE = True
-
-    def __init__(
-        self,
-        model_path: str = "nyu-visionx/Cambrian-S-7B",
-        conv_template: str = "qwen_2",
-        use_cache: bool = False,
-        # 视频
-        video_max_frames: int = 32,
-        video_fps: int = 1,
-        video_force_sample: bool = False,
-        # anyres
-        miv_token_len: int = 64,
-        si_token_len: int = 729,
-        image_aspect_ratio: str = "anyres",
-        anyres_max_subimages: int = 9,
-        device_id: int = 0,
-        force_single_device: bool = True,
-        **kwargs,
-    ):
-        assert model_path is not None
-        try:
-            from cambrian.model.builder import load_pretrained_model
-            from cambrian.mm_utils import (
-                process_images, tokenizer_image_token, get_model_name_from_path, expand2square
-            )
-            from cambrian.constants import (
-                IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN,
-                DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
-            )
-            from cambrian.conversation import conv_templates
-        except Exception as e:
-            logging.critical('Please install cambrian from https://github.com/cambrian-mllm/cambrian.')
-            raise e
-
-        # 绑定 Cambrian 符号为成员，后续统一 self. 调用
-        self.process_images = process_images
-        self.tokenizer_image_token = tokenizer_image_token
-        self.get_model_name_from_path = get_model_name_from_path
-        self.expand2square = expand2square
-        self.IMAGE_TOKEN_INDEX = IMAGE_TOKEN_INDEX
-        self.DEFAULT_IMAGE_TOKEN = DEFAULT_IMAGE_TOKEN
-        self.DEFAULT_IM_START_TOKEN = DEFAULT_IM_START_TOKEN
-        self.DEFAULT_IM_END_TOKEN = DEFAULT_IM_END_TOKEN
-        self.conv_templates = conv_templates
-
-        self.device = f"cuda:{device_id}"
-        self.force_single_device = force_single_device
-        print(f" Cambrian single card device: {self.device}")
-
-        # 加载模型 —— 不指定 device / dtype；允许其内部按需要分配（可用 device_map="auto"）
-        model_name = self.get_model_name_from_path(model_path)
-        self.tokenizer, self.model, self.image_processor, self.max_length = load_pretrained_model(
-            model_path,
-            None,
-            model_name,
-            device_map={"": self.device} if force_single_device else "auto",
-        )
-
-        try:
-            import transformers
-            from transformers.cache_utils import DynamicCache
-            if not hasattr(DynamicCache, "get_usable_length") and hasattr(DynamicCache, "get_seq_length"):
-                def get_usable_length(self, seq_length):
-                    # 新版函数名改了，这里向后兼容
-                    return self.get_seq_length(seq_length)
-                DynamicCache.get_usable_length = get_usable_length
-                logging.warning("[Patch] Added DynamicCache.get_usable_length alias to maintain Cambrian compatibility.")
-        except Exception as e:
-            logging.warning(f"[Patch] DynamicCache patch failed: {e}")
-
-
-        # 写入 config
-        cfg = self.model.config
-        cfg.video_max_frames = video_max_frames
-        cfg.video_fps = video_fps
-        cfg.video_force_sample = video_force_sample
-        cfg.miv_token_len = miv_token_len
-        cfg.si_token_len = si_token_len
-        cfg.image_aspect_ratio = image_aspect_ratio
-        cfg.anyres_max_subimages = anyres_max_subimages
-        # 建议：固定使用 IM_START/END，避免多图时提示不一致
-        cfg.mm_use_im_start_end = getattr(cfg, "mm_use_im_start_end", True)
-
-        self.use_cache = use_cache
-        self.model_config = cfg
-        self.conv_template = conv_template
-
-        self.model.eval()
-        # 目标卡就是你用的 self.device
-        _scan_devices(self.model, target=self.device)
-
-
-
-def _scan_devices(model, target: str = "cuda:0", max_print: int = 50):
-    bad = []
-    import itertools as it
-    for n, p in model.named_parameters(recurse=True):
-        d = f"cuda:{p.device.index}" if p.is_cuda else str(p.device)
-        if d != target:
-            bad.append(("PARAM", n, d, tuple(p.shape)))
-    for n, b in model.named_buffers(recurse=True):
-        d = f"cuda:{b.device.index}" if b.is_cuda else str(b.device)
-        if d != target:
-            bad.append(("BUFFER", n, d, tuple(b.shape)))
-    if bad:
-        print(f"[SCAN] Found {len(bad)} tensors NOT on {target}. Showing up to {max_print}:")
-        for kind, n, d, shape in bad[:max_print]:
-            print(f"  - {kind:<6} {n:<64} on {d:<8} shape={shape}")
-    else:
-        print(f"[SCAN] All params/buffers are on {target}.")

@@ -90,6 +90,7 @@ class ImageMCQDataset(ImageBaseDataset):
         'AI2D_TEST_NO_MASK': 'https://opencompass.openxlab.space/utils/VLMEval/AI2D_TEST_NO_MASK.tsv',
         'MMStar': 'https://opencompass.openxlab.space/utils/VLMEval/MMStar.tsv',
         'MMStar_KO': 'https://huggingface.co/datasets/NCSOFT/K-MMStar/resolve/main/MMStar_KO.tsv',
+        'MMStar_TR': 'https://huggingface.co/datasets/kesimeg/MMStar_tr/resolve/main/MMStar_TR.tsv',
         'RealWorldQA': 'https://opencompass.openxlab.space/utils/VLMEval/RealWorldQA.tsv',
         'MLLMGuard_DS': 'https://opencompass.openxlab.space/utils/VLMEval/MLLMGuard_DS.tsv',
         'BLINK': 'https://opencompass.openxlab.space/utils/VLMEval/BLINK.tsv',
@@ -193,6 +194,7 @@ class ImageMCQDataset(ImageBaseDataset):
     DATASET_URL.update(MTL_MMBench_URLS)
     DATASET_MD5.update(MMMB_MD5)
     DATASET_MD5.update(MTL_MMBench_MD5)
+    DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125']
 
     def build_prompt(self, line):
 
@@ -239,7 +241,7 @@ class ImageMCQDataset(ImageBaseDataset):
 
     def evaluate_heuristic(self, eval_file, **judge_kwargs):
         from .utils.multiple_choice import (
-            report_acc, report_acc_MMT, report_acc_MMSci, mcq_circular_eval, mcq_vanilla_eval
+            report_acc, report_acc_MMT, report_acc_MMSci, mcq_circular_eval, mcq_vanilla_eval, report_acc_MMVP
         )
         # assert dataset is not None
         dataset_map = {
@@ -270,15 +272,12 @@ class ImageMCQDataset(ImageBaseDataset):
 
         if model == 'exact_matching':
             model = None
-        elif gpt_key_set():
+        else:
             model = build_judge(**judge_kwargs)
             if not model.working():
                 warnings.warn('OPENAI API is not working properly, will use exact matching for evaluation')
                 warnings.warn(DEBUG_MESSAGE)
                 model = None
-        else:
-            warnings.warn('OPENAI_API_KEY is not set properly, will use exact matching for evaluation')
-            model = None
 
         result_file = get_intermediate_file_path(eval_file, f'_{name_str}_result', 'pkl')
 
@@ -312,6 +311,8 @@ class ImageMCQDataset(ImageBaseDataset):
             acc = report_acc_MMT(data)
         elif 'MMSci' in dataset:
             acc = report_acc_MMSci(data)
+        elif dataset == 'MMVP':
+            acc = report_acc_MMVP(data)
         else:
             acc = report_acc(data)
 
@@ -629,84 +630,6 @@ class MMMUProDataset(MMMUDataset):
             return super().evaluate(eval_file, **judge_kwargs)
 
 
-class MUIRDataset(ImageMCQDataset):
-
-    DATASET_URL = {
-        'MUIRBench': 'http://opencompass.openxxlab.com/utils/VLMEval/MUIRBench.tsv'
-    }
-
-    DATASET_MD5 = {
-        'MUIRBench': '2e5e6fd7699761b08a7cb3ab8c0c2ec8'
-    }
-
-    @staticmethod
-    def split_MUIR(msgs):
-        text, images = None, []
-
-        # Separate images and text from msgs
-        for s in msgs:
-            if s['type'] == 'image':
-                images.append(s['value'])
-            elif s['type'] == 'text':
-                assert text is None  # Ensure only one text entry is expected
-                text = s['value']
-
-        # Split text by <image> tags
-        text_segs = text.split('<image>')
-
-        # Initialize the segments list
-        segs = []
-
-        # Iterate through the text segments and images
-        for i, seg in enumerate(text_segs):
-            # Append the image if this is not the first segment and there are still images left
-            if i > 0 and i - 1 < len(images):
-                segs.append(dict(type='image', value=images[i - 1]))
-            # Append the text segment (if it's non-empty)
-            if len(seg) > 0:
-                segs.append(dict(type='text', value=seg))
-
-        return segs
-
-    def build_prompt(self, line):
-
-        if isinstance(line, int):
-            line = self.data.iloc[line]
-
-        if self.meta_only:
-            tgt_path = toliststr(line['image_path'])
-        else:
-            tgt_path = self.dump_image(line)
-
-        question = line['question']
-        options = {
-            cand: line[cand]
-            for cand in string.ascii_uppercase
-            if cand in line and not pd.isna(line[cand])
-        }
-        # options_prompt = ''
-        options_prompt = '\n'.join([f'{key}. {item}' for key, item in options.items()])
-        # for key, item in options.items():
-        #     options_prompt += f'{key}. {item}\n'
-
-        prompt = ''
-
-        prompt += f'{question}\n'
-        if len(options):
-            prompt += options_prompt
-            prompt += "\nAnswer with the option's letter from the given choices directly."
-
-        msgs = []
-        if isinstance(tgt_path, list):
-            msgs.extend([dict(type='image', value=p) for p in tgt_path])
-        else:
-            msgs = [dict(type='image', value=tgt_path)]
-        msgs.append(dict(type='text', value=prompt))
-
-        msgs = self.split_MUIR(msgs)
-        return msgs
-
-
 class GMAIMMBenchDataset(ImageMCQDataset):
 
     DATASET_URL = {
@@ -738,6 +661,7 @@ class GMAIMMBenchDataset(ImageMCQDataset):
         'GMAI_mm_bench_TEST_part_10': '3dae94627b9ac0fe00180d4780fbf6dc',
         'GMAI_mm_bench_TEST_part_11': 'd08dc813f0eb6bbab63cae2a9d113c4b',
     }
+    DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125']
 
     @classmethod
     def supported_datasets(cls):
@@ -809,21 +733,17 @@ class GMAIMMBenchDataset(ImageMCQDataset):
 
         suffix = eval_file.split('.')[-1]
         model = judge_kwargs.get('model', 'exact_matching')
-        assert model in ['chatgpt-0125', 'exact_matching', 'gpt-4-0125']
         name_str_map = {'chatgpt-0125': 'openai', 'gpt-4-0125': 'gpt4'}
         name_str = name_str_map[model] if model in name_str_map else model
 
         if model == 'exact_matching':
             model = None
-        elif gpt_key_set():
+        else:
             model = build_judge(**judge_kwargs)
             if not model.working():
                 warnings.warn('OPENAI API is not working properly, will use exact matching for evaluation')
                 warnings.warn(DEBUG_MESSAGE)
                 model = None
-        else:
-            warnings.warn('OPENAI_API_KEY is not set properly, will use exact matching for evaluation')
-            model = None
 
         result_file = eval_file.replace(f'.{suffix}', f'_{name_str}_result.pkl')
 
@@ -1199,16 +1119,11 @@ class CVBench(ImageMCQDataset):
 
         if model_name == "exact_matching":
             model = None
-        elif gpt_key_set():
+        else:
             model = build_judge(**judge_kwargs)
             if not model.working():
                 warnings.warn(DEBUG_MESSAGE)
                 model = None
-        else:
-            warnings.warn(
-                "OPENAI_API_KEY is not set properly, will use exact matching for evaluation"
-            )
-            model = None
 
         result_file = get_intermediate_file_path(eval_file, f"_{model_name}_result", "pkl")
 
@@ -1273,6 +1188,7 @@ class CVBench(ImageMCQDataset):
 
 
 class HRBenchDataset(ImageMCQDataset):
+    DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125']
 
     DATASET_URL = {
         'HRBench4K': 'https://huggingface.co/datasets/DreamMr/HR-Bench/resolve/main/hr_bench_4k.tsv',
@@ -1291,21 +1207,17 @@ class HRBenchDataset(ImageMCQDataset):
         nproc = judge_kwargs.pop('nproc', 4)
 
         model = judge_kwargs.get('model', 'extract_matching')
-        assert model in ['chatgpt-0125', 'exact_matching', 'gpt-4-0125']
         name_str_map = {'chatgpt-0125': 'openai', 'gpt-4-0125': 'gpt4'}
         name_str = name_str_map[model] if model in name_str_map else model
 
         if model == 'exact_matching':
             model = None
-        elif gpt_key_set():
+        else:
             model = build_judge(**judge_kwargs)
             if not model.working():
                 warnings.warn('OPENAI API is not working properly, will use exact matching for evaluation')
                 warnings.warn(DEBUG_MESSAGE)
                 model = None
-        else:
-            warnings.warn('OPENAI_API_KEY is not set properly, will use exact matching for evaluation')
-            model = None
 
         result_file = get_intermediate_file_path(eval_file, f'_{name_str}_result', 'pkl')
 
@@ -1428,6 +1340,7 @@ class WeMath(ImageBaseDataset):
     }
     DATASET_MD5 = {'WeMath': 'b5e969a075f01290a542411fb7766388',
                    'WeMath_COT': 'b5e969a075f01290a542411fb7766388'}
+    DEFAULT_JUDGE = ['gpt-4-0125', 'gpt-4-turbo', 'gpt-4o-mini']
 
     def build_prompt(self, line):
         if isinstance(line, int):
@@ -1475,21 +1388,17 @@ class WeMath(ImageBaseDataset):
 
         # model = judge_kwargs['model']
         model = judge_kwargs.get('model', 'exact_matching')
-        assert model in ['exact_matching', 'gpt-4-0125', 'gpt-4-turbo', 'gpt-4o-mini'], model
         name_str_map = {'gpt-4-0125': 'gpt4', 'gpt-4-turbo': 'gpt4-turbo', 'gpt-4o-mini': 'gpt4o-mini'}
         name_str = name_str_map[model] if model in name_str_map else model
 
         if model == 'exact_matching':
             model = None
-        elif gpt_key_set():
+        else:
             model = build_judge(**judge_kwargs)
             if not model.working():
                 warnings.warn('OPENAI API is not working properly, will use exact matching for evaluation')
                 warnings.warn(DEBUG_MESSAGE)
                 model = None
-        else:
-            warnings.warn('OPENAI_API_KEY is not set properly, will use exact matching for evaluation')
-            model = None
 
         storage = get_intermediate_file_path(eval_file, f'_{name_str}')
         nproc = judge_kwargs.pop('nproc', 4)
@@ -1678,6 +1587,7 @@ class VisuLogic(ImageMCQDataset):
     DATASET_MD5 = {
         'VisuLogic': 'b0820b5ec1e01dfe3951927f0def73b6',
     }
+    DEFAULT_JUDGE = ['gpt-4-0125', 'gpt-4-turbo', 'gpt-4o-mini']
 
     def build_prompt(self, line):
         if isinstance(line, int):
@@ -1710,21 +1620,17 @@ class VisuLogic(ImageMCQDataset):
 
         # model = judge_kwargs['model']
         model = judge_kwargs.get('model', 'exact_matching')
-        assert model in ['exact_matching', 'gpt-4-0125', 'gpt-4-turbo', 'gpt-4o-mini'], model
         name_str_map = {'gpt-4-0125': 'gpt4', 'gpt-4-turbo': 'gpt4-turbo', 'gpt-4o-mini': 'gpt4o-mini'}
         name_str = name_str_map[model] if model in name_str_map else model
 
         if model == 'exact_matching':
             model = None
-        elif gpt_key_set():
+        else:
             model = build_judge(**judge_kwargs)
             if not model.working():
                 warnings.warn('OPENAI API is not working properly, will use exact matching for evaluation')
                 warnings.warn(DEBUG_MESSAGE)
                 model = None
-        else:
-            warnings.warn('OPENAI_API_KEY is not set properly, will use exact matching for evaluation')
-            model = None
 
         storage = get_intermediate_file_path(eval_file, f'_{name_str}')
 
@@ -1761,6 +1667,7 @@ class TDBench(ImageMCQDataset):
         'tdbench_cs_integrity': '05b2045cae2016f6edc400da48e2df4b',
         'tdbench_cs_depth': '449dbe4b24a43a06a9f680811deae517',
     }
+    DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125', 'gpt-4o-mini']
 
     def evaluate(self, eval_file, **judge_kwargs):
         acc, result_file = self.do_evaluate(eval_file, **judge_kwargs)
@@ -1786,21 +1693,17 @@ class TDBench(ImageMCQDataset):
         nproc = judge_kwargs.pop('nproc', 4)
 
         model = judge_kwargs.get('model', 'exact_matching')
-        assert model in ['chatgpt-0125', 'exact_matching', 'gpt-4-0125', 'gpt-4o-mini']
         name_str_map = {'chatgpt-0125': 'openai', 'gpt-4-0125': 'gpt4', 'gpt-4o-mini': 'gpt4omini'}
         name_str = name_str_map[model] if model in name_str_map else model
 
         if model == 'exact_matching':
             model = None
-        elif gpt_key_set():
+        else:
             model = build_judge(**judge_kwargs)
             if not model.working():
                 warnings.warn('OPENAI API is not working properly, will use exact matching for evaluation')
                 warnings.warn(DEBUG_MESSAGE)
                 model = None
-        else:
-            warnings.warn('OPENAI_API_KEY is not set properly, will use exact matching for evaluation')
-            model = None
 
         result_file = get_intermediate_file_path(eval_file, f'_{name_str}_result', 'pkl')
 
@@ -2338,8 +2241,24 @@ class VLMBlind(ImageMCQDataset):
                 ans = self.extract_content_in_braces(data_item["prediction"])
                 if ans == data_item["answers"]:
                     task_stats[task]['correct'] += 1
-            elif data_item["task"] == "Touchdown Reading":
+            elif data_item["task"] == "Touching Circles":
+                if str.lower(data_item["answers"]) in str.lower(data_item["prediction"]):
+                    task_stats[task]['correct'] += 1
+            elif data_item["task"] == "Counting Grid - Word Grids":
                 if self.compare_string_with_values(data_item["prediction"], data_item["answers"]):
+                    task_stats[task]['correct'] += 1
+            elif data_item["task"] == "Counting Grid - Blank Grids":
+                if self.compare_string_with_values(data_item["prediction"], data_item["answers"]):
+                    task_stats[task]['correct'] += 1
+            elif data_item["task"] == "Olympic Counting - Pentagons":
+                if data_item["answers"] in data_item["prediction"]:
+                    task_stats[task]['correct'] += 1
+            elif data_item["task"] == "Olympic Counting - Circles":
+                if data_item["answers"] in data_item["prediction"]:
+                    task_stats[task]['correct'] += 1
+            elif data_item["task"] == "Circled Letter":
+                ans = self.extract_content_in_braces(data_item["prediction"])
+                if ans == data_item["answers"]:
                     task_stats[task]['correct'] += 1
 
         accuracy_dict = {task: [stats['correct'] / stats['total']] for task, stats in sorted(task_stats.items())}
@@ -2399,12 +2318,20 @@ class _3DSRBench(ImageMCQDataset):
 
     def evaluate(self, eval_file, **judge_kwargs):
         super().evaluate(eval_file, **judge_kwargs)
+        import glob
         from .utils.multiple_choice import report_acc
+
         dname = osp.dirname(eval_file)
-        base = osp.basename(eval_file).split('.')[0]
-        result_file = ls(dname, match=[base, 'result.xlsx'])
-        assert len(result_file) == 1
-        result_file = result_file[0]
+        fname = osp.basename(eval_file)
+        base, _ = osp.splitext(fname)
+
+        pattern = osp.join(dname, f"{base}_*_result.xlsx")
+        result_files = glob.glob(pattern)
+
+        if len(result_files) != 1:
+            raise RuntimeError(f"Expected 1 result file, got {len(result_files)}: {result_files}")
+
+        result_file = result_files[0]
         data = load(result_file)
 
         acc_map = {}
@@ -2451,6 +2378,7 @@ class _3DSRBench(ImageMCQDataset):
 class AffordanceDataset(ImageMCQDataset):
     DATASET_URL = {'A4Bench': "http://opencompass.openxlab.space/utils/VLMEval/A4Bench.tsv"}
     DATASET_MD5 = {'A4Bench': "7c0dc90e8c03e67ff937f3abb4a3fffb"}
+    DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125']
 
     def build_prompt(self, line):
         if isinstance(line, int):
@@ -2546,21 +2474,17 @@ class AffordanceDataset(ImageMCQDataset):
 
         suffix = eval_file.split('.')[-1]
         model = judge_kwargs.get('model', 'exact_matching')
-        assert model in ['chatgpt-0125', 'exact_matching', 'gpt-4-0125']
         name_str_map = {'chatgpt-0125': 'openai', 'gpt-4-0125': 'gpt4'}
         name_str = name_str_map[model] if model in name_str_map else model
 
         if model == 'exact_matching':
             model = None
-        elif gpt_key_set():
+        else:
             model = build_judge(**judge_kwargs)
             if not model.working():
                 warnings.warn('OPENAI API is not working properly, will use exact matching for evaluation')
                 warnings.warn(DEBUG_MESSAGE)
                 model = None
-        else:
-            warnings.warn('OPENAI_API_KEY is not set properly, will use exact matching for evaluation')
-            model = None
 
         try:
             df = pd.read_excel(eval_file)
@@ -2839,11 +2763,12 @@ class TopViewRS(ImageMCQDataset):
     DATASET_MD5 = {
         'TopViewRS': '5669bc122457979dd2ac3b69b5dc1622'
     }
+    DEFAULT_JUDGE = ['chatgpt-0125', 'gpt-4-0125']
 
     def evaluate(self, eval_file, **judge_kwargs):
         from .utils.multiple_choice import eval_vanilla, report_topviewrs_acc
         from ..utils import track_progress_rich
-        from ..smp import load, dump, gpt_key_set
+        from ..smp import load, dump
         from collections import defaultdict
         import numpy as np
         import pandas as pd
@@ -2923,20 +2848,16 @@ class TopViewRS(ImageMCQDataset):
         nproc = judge_kwargs.pop('nproc', 4)
         suffix = eval_file.split('.')[-1]
         model = judge_kwargs.get('model', 'exact_matching')
-        assert model in ['chatgpt-0125', 'exact_matching', 'gpt-4-0125']
         name_str_map = {'chatgpt-0125': 'openai', 'gpt-4-0125': 'gpt4'}
         name_str = name_str_map[model] if model in name_str_map else model
 
         if model == 'exact_matching':
             model = None
-        elif gpt_key_set():
+        else:
             model = build_judge(**judge_kwargs)
             if not model.working():
                 warnings.warn('OPENAI API is not working properly, will use exact matching for evaluation')
                 model = None
-        else:
-            warnings.warn('OPENAI_API_KEY is not set properly, will use exact matching for evaluation')
-            model = None
 
         result_file = eval_file.replace(f'.{suffix}', f'_{name_str}_result.pkl')
 

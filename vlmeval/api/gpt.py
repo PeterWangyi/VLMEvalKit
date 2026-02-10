@@ -129,10 +129,6 @@ class OpenAIWrapper(BaseAPI):
                 env_key = os.environ.get('OPENAI_API_KEY', '')
                 if key is None:
                     key = env_key
-                assert isinstance(key, str) and key.startswith('sk-'), (
-                    f'Illegal openai_key {key}. '
-                    'Please set the environment variable OPENAI_API_KEY to your openai key. '
-                )
 
         self.key = key
         assert img_size > 0 or img_size == -1
@@ -404,6 +400,13 @@ class OpenAIWrapper(BaseAPI):
             max_tokens = int(os.getenv('grok_max_tokens', max_tokens))
             payload['max_tokens'] = max_tokens
 
+
+        proxies = {}
+        if os.getenv('http_proxy'):
+            proxies['http'] = os.getenv('http_proxy')
+        if os.getenv('https_proxy'):
+            proxies['https'] = os.getenv('https_proxy')
+        proxies = proxies or None
 
         response = requests.post(
             self.api_base,

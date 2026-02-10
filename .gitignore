@@ -164,6 +164,10 @@ scripts/*ttf
 .history
 cache_dir/*
 
+# Ignore data and ckpts
+*.pth
+data
+
 # Evaluation Outputs
 outputs/*
 demo.ipynb
@@ -221,3 +225,6 @@ vlmeval/utils/unified_cal_score/bench/read_all_tsv.py
 vlmeval/utils/unified_cal_score/utils/__init__.py
 vlmeval/utils/unified_cal_score/utils/matching_func.py
 vlmeval/utils/unified_cal_score/utils/tools.py
+
+temp
+result*

@@ -4,7 +4,7 @@ from .image_base import img_root_map, ImageBaseDataset
 from .image_caption import ImageCaptionDataset
 from .image_yorn import ImageYORNDataset
 from .image_mcq import (
-    ImageMCQDataset, MMMUDataset, CustomMCQDataset, MUIRDataset, GMAIMMBenchDataset, MMERealWorld, HRBenchDataset,
+    ImageMCQDataset, MMMUDataset, CustomMCQDataset, GMAIMMBenchDataset, MMERealWorld, HRBenchDataset,
     NaturalBenchDataset, WeMath, MMMUProDataset, VMCBenchDataset, MedXpertQA_MM_test, LEGO, VisuLogic, CVBench, TDBench,
     MicroBench, OmniMedVQA, MSEarthMCQ, VLMBlind, SCAM, _3DSRBench, AffordanceDataset, OmniEarthMCQBench, XLRSBench,
     TreeBench, CVQA, TopViewRS
@@ -14,7 +14,7 @@ from .image_vqa import (
     ImageVQADataset, MathVision, OCRBench, MathVista, LLaVABench, LLaVABench_KO, VGRPBench, MMVet, MTVQADataset,
     TableVQABench, CustomVQADataset, CRPE, MathVerse, OlympiadBench, SeePhys, QSpatial, VizWiz, MMNIAH, LogicVista,
     MME_CoT, MMSci_Captioning, Physics_yale, TDBenchGrounding, WildDocBenchmark, OCR_Reasoning, PhyX, CountBenchQA,
-    ZEROBench, Omni3DBench, TallyQA, MMEReasoning, MMVMBench, BMMR, OCRBench_v2, AyaVisionBench, MathCanvas
+    ZEROBench, Omni3DBench, TallyQA, MMEReasoning, MMVMBench, BMMR, OCRBench_v2, AyaVisionBench, MathCanvas, MMReason
 )
 
 from .image_ccocr import CCOCRDataset
@@ -32,6 +32,8 @@ from .spatial457 import Spatial457
 from .charxiv import CharXiv
 from .chartmuseum import ChartMuseum
 from .chartqapro import ChartQAPro
+from .refcoco import RefCOCODataset
+from .simplevqa import SimpleVQA
 
 from .mmbench_video import MMBenchVideo
 from .videomme import VideoMME
@@ -46,7 +48,7 @@ from .video_concat_dataset import ConcatVideoDataset
 from .mmgenbench import MMGenBench
 from .cgbench import CGBench_MCQ_Grounding_Mini, CGBench_OpenEnded_Mini, CGBench_MCQ_Grounding, CGBench_OpenEnded
 from .CGAVCounting.cg_av_counting import CGAVCounting
-
+from .dream import DREAM
 from .megabench import MEGABench
 from .moviechat1k import MovieChat1k
 from .video_mmlu import Video_MMLU_CAP, Video_MMLU_QA
@@ -56,13 +58,19 @@ from .gobench import GOBenchDataset
 from .sfebench import SFE
 from .visfactor import VisFactor
 from .ost_bench import OSTDataset
+from .videommmu import VideoMMMU
 
 from .EgoExoBench.egoexobench import EgoExoBench_MCQ
+from .videott import VideoTT
 
 from .worldsense import WorldSense
 from .qbench_video import QBench_Video, QBench_Video_MCQ, QBench_Video_VQA
 from .sitebench import SiteBenchVideo
-from .vsibench import VsiBench
+from .vsibench import VsiBench, VsiSuperRecall, VsiSuperCount
+from .mmsibench import MMSIVideoBench
+from .stibench import STIBench
+from .dsrbench import DSRBench
+from .osibench import OSIBench
 
 from .cmmmu import CMMMU
 from .emma import EMMADataset
@@ -96,11 +104,22 @@ from .viewspatialbench import ViewSpatialBench
 from .mmsibench import MMSIBench
 from .sitebench import SiteBenchImage
 from .sparbench import SparBench
-from .spatialviz_bench import SpatialVizBench
+from .spatialvizbench import SpatialVizBench
 from .starebench import StareBench
 from .omnispatialbench import OmniSpatialBench
+from .erqabench import ERQABench
+from .robospatialbench import RoboSpatialBench
+from .refspatialbench import RefSpatialBench
+from .spbench import SPBench
+from .eriq import ERIQBench
+from .muirbench import MUIRBench
 
 from .reasonmap_plus import ReasonMap_Plus
+from .hipho import HiPhODataset
+from .gsm8k_v import GSM8KVDataset
+from .macbench import MaCBench
+from .sarena_mini import SArena_MINI
+from .uni_svg import UniSVG
 
 
 class ConcatDataset(ImageBaseDataset):
@@ -215,9 +234,9 @@ IMAGE_DATASET = [
     ImageCaptionDataset, ImageYORNDataset, ImageMCQDataset, ImageVQADataset,
     MathVision, MMMUDataset, OCRBench, MathVista, LLaVABench, LLaVABench_KO, VGRPBench, MMVet,
     MTVQADataset, TableVQABench, MMLongBench, VCRDataset, MMDUDataset, DUDE,
-    SlideVQA, MUIRDataset, CCOCRDataset, GMAIMMBenchDataset, MMERealWorld,
+    SlideVQA, CCOCRDataset, GMAIMMBenchDataset, MMERealWorld,
     HRBenchDataset, CRPE, MathVerse, NaturalBenchDataset, MIABench,
-    OlympiadBench, SeePhys,WildVision, MMMath, QSpatial, Dynamath, MMGenBench, VizWiz,
+    OlympiadBench, SeePhys,WildVision, MMMath, QSpatial, Dynamath, GSM8KVDataset, MMGenBench, VizWiz,
     MMNIAH, CMMMU, VLRewardBench, WeMath, LogicVista, MMMUProDataset,
     CreationMMBenchDataset, ImageShortQADataset, MMAlignBench, OmniDocBench,
     VLM2Bench, VMCBenchDataset, EMMADataset, MME_CoT, MOAT, MedXpertQA_MM_test,
@@ -228,11 +247,17 @@ IMAGE_DATASET = [
     ZEROBench, SCAM, Omni3DBench, TallyQA, _3DSRBench, BMMR, AffordanceDataset,
     MMEReasoning, GOBenchDataset, SFE, ChartMimic, MMVMBench, XLRSBench,
     OmniEarthMCQBench, VisFactor, OSTDataset, OCRBench_v2, TreeBench, CVQA, M4Bench,
-    AyaVisionBench, TopViewRS, VLMBias, MMHELIX, MedqbenchMCQDataset, MathCanvas,
+    AyaVisionBench, TopViewRS, VLMBias, MMHELIX, MedqbenchMCQDataset, MathCanvas, MMReason,
     MedqbenchPairedDescriptionDataset, MedqbenchCaptionDataset, ChartMuseum, ChartQAPro, ReasonMap_Plus,
-    olmOCRBench, OceanOCRBench, MATBench, VLRMBench,
+    olmOCRBench, OceanOCRBench, MATBench, VLRMBench, RefCOCODataset, SimpleVQA, HiPhODataset, MaCBench,
+    UniSVG, SArena_MINI,
+]
+
+# add by EASI team
+IMAGE_DATASET += [
     MindCubeBench, EmbSpatialBench, ViewSpatialBench, MMSIBench, SiteBenchImage,
-    SparBench, SpatialVizBench, OmniSpatialBench, StareBench
+    SparBench, SpatialVizBench, StareBench, OmniSpatialBench, ERQABench, RoboSpatialBench, RefSpatialBench,
+    SPBench, ERIQBench, MUIRBench
 ]
 
 VIDEO_DATASET = [
@@ -244,8 +269,14 @@ VIDEO_DATASET = [
     QBench_Video, QBench_Video_MCQ, QBench_Video_VQA,
     Video_MMLU_CAP, Video_MMLU_QA,
     Video_Holmes, VCRBench, CGAVCounting,
-    EgoExoBench_MCQ,
-    SiteBenchVideo, VsiBench,
+    EgoExoBench_MCQ, DREAM, VideoTT, VideoMMMU
+
+]
+
+# add by EASI team
+VIDEO_DATASET += [
+    SiteBenchVideo, VsiBench, MMSIVideoBench, VsiSuperRecall, VsiSuperCount, STIBench,
+    DSRBench, OSIBench
 ]
 
 TEXT_DATASET = [

@@ -1,23 +1,31 @@
+import os
 import ast
-import os.path as osp
 
-from ..smp import *
-from ..smp.file import LMUDataRoot
+from tqdm import tqdm
+from huggingface_hub import snapshot_download
+
+from ..smp.file import load
 from ..smp.misc import toliststr, get_cache_path, modelscope_flag_set
 from .image_mcq import ImageMCQDataset
 
-from huggingface_hub import snapshot_download
-
 
 class ViewSpatialBench(ImageMCQDataset):
+    """
+    ViewSpatial-Bench.
+
+    Reference:
+      ViewSpatial-Bench: Evaluating Multi-perspective Spatial Localization in Vision-Language Models
+      https://arxiv.org/abs/2505.21500
+    """
+
     TYPE = 'MCQ'
 
-    LMUData_root = LMUDataRoot()
-    DATASET_URL = {}
-
-    # TODO: change this into hugging face path after upload
-    DATASET_URL["ViewSpatialBench"] = osp.join(LMUData_root, "ViewSpatialBench.tsv")
-    DATASET_MD5 = {key: None for key in DATASET_URL}
+    DATASET_URL = {
+        'ViewSpatialBench': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/ViewSpatialBench.tsv'  # noqa: E501
+    }
+    DATASET_MD5 = {
+        'ViewSpatialBench': 'c1c0c1522c5b8f5d72b3abad6af105cd'
+    }
 
     def _task_category(self):
         return [
@@ -127,17 +135,6 @@ class ViewSpatialBench(ImageMCQDataset):
 
         prompt = question_text + choices_text + post_prompt
 
-        ladder_test = getenv_bool("ladder_test", False)
-        print(f"ladder test: {ladder_test}")
-        if ladder_test:
-            print(f"---------------ladder test: {ladder_test}---------------------")
-            question_text = f"Question: {question}\n"
-            choices_text = f"Options: {choices}\n"
-            post_prompt = "Please answer with the option's letter from the given choices directly."
-
-            prompt = ''
-            prompt = question_text + choices_text + post_prompt
-
         msgs = []
         if isinstance(tgt_path, list):
             msgs.extend([dict(type='image', value=p) for p in tgt_path])
@@ -148,12 +145,15 @@ class ViewSpatialBench(ImageMCQDataset):
         return msgs
 
     def evaluate(self, eval_file, **judge_kwargs):
-        from .utils.spatial_rel_bench.cal_scores import compute_mcq_score, eval_mcq_core
+        from .utils.spatial_bench.cal_scores import eval_mcq_score, build_mcq_score_fn
 
-        return eval_mcq_core(
+        # Select MCQ scoring function (rule-based or LLM-based) according to judge_kwargs['model'].
+        score_fn = build_mcq_score_fn(**judge_kwargs)
+
+        return eval_mcq_score(
             load_fn=load,
             eval_file=eval_file,
-            score_fn=compute_mcq_score,
+            score_fn=score_fn,
             group_col='question_type',
             order=self._task_category(),
             dataset_name=getattr(self, 'dataset_name', 'ViewSpatialBench')

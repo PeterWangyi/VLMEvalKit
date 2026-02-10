@@ -11,7 +11,8 @@ from .image_mcq import ImageMCQDataset
 from ..smp.file import load
 from ..smp.misc import toliststr, get_cache_path
 
-
+# Prompt template adapted from the official OmniSpatial codebase:
+# https://github.com/qizekun/OmniSpatial/tree/main
 RE_FORMAT = """
 End your answer with a separate line formatted exactly as:
 
@@ -76,28 +77,44 @@ If uncertain, pick the most plausible option—never refuse or reply “insuffic
 
 
 class OmniSpatialBench(ImageMCQDataset):
+    """
+    OmniSpatial.
+
+    Reference:
+      OmniSpatial: Towards Comprehensive Spatial Reasoning Benchmark for Vision Language Models
+      https://arxiv.org/abs/2506.03135
+    """
+
     TYPE = 'MCQ'
 
-    DATASET_URL = {
-        'OmniSpatialBench': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/OmniSpatialBench.tsv',  # noqa: E501
-        'OmniSpatialBench_default': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/OmniSpatialBench.tsv',  # noqa: E501
-        'OmniSpatialBench_zeroshot_cot': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/OmniSpatialBench.tsv',  # noqa: E501
-        'OmniSpatialBench_manual_cot': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/OmniSpatialBench.tsv',  # noqa: E501
-    }
+    OMNI_TSV_URL = 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/OmniSpatialBench.tsv'
+    OMNI_TSV_MD5 = '5d0896fc57c452055b020cc309ed799b'
 
-    DATASET_MD5 = {key: None for key in DATASET_URL}
+    VARIANTS = [
+        'OmniSpatialBench',
+        'OmniSpatialBench_default',
+        'OmniSpatialBench_zeroshot_cot',
+        'OmniSpatialBench_manual_cot',
+    ]
+
+    DATASET_URL = {}
+    DATASET_MD5 = {}
+
+    for name in VARIANTS:
+        DATASET_URL[name] = OMNI_TSV_URL
+        DATASET_MD5[name] = OMNI_TSV_MD5
 
     SYS_PROMPTS = {
-        "default": DEFAULT_SYSTEM_PROMPT,
-        "zeroshot_cot": ZERO_SHOT_COT_SYSTEM_PROMPT,
-        "manual_cot": MANUAL_COT_SYSTEM_PROMPT,
+        'default': DEFAULT_SYSTEM_PROMPT,
+        'zeroshot_cot': ZERO_SHOT_COT_SYSTEM_PROMPT,
+        'manual_cot': MANUAL_COT_SYSTEM_PROMPT,
     }
 
     CATEGORY_TASK_ORDER = OrderedDict([
-        ("Dynamic_Reasoning", ["Manipulation", "Motion_Analysis"]),
-        ("Spatial_Interaction", ["Traffic_Analysis", "Localization", "Geospatial_Strategy"]),
-        ("Complex_Logic", ["Pattern_Recognition", "Geometric_Reasoning"]),
-        ("Perspective_Taking", ["Egocentric", "Allocentric", "Hypothetical"]),
+        ('Dynamic_Reasoning', ['Manipulation', 'Motion_Analysis']),
+        ('Spatial_Interaction', ['Traffic_Analysis', 'Localization', 'Geospatial_Strategy']),
+        ('Complex_Logic', ['Pattern_Recognition', 'Geometric_Reasoning']),
+        ('Perspective_Taking', ['Egocentric', 'Allocentric', 'Hypothetical']),
     ])
 
     def __init__(self, dataset, skip_noimg=True):
@@ -106,29 +123,29 @@ class OmniSpatialBench(ImageMCQDataset):
 
     def parse_dataset_name(self, name: str) -> str:
         if not isinstance(name, str):
-            return ""
+            return ''
 
         lower = name.lower()
 
         for key in self.SYS_PROMPTS.keys():
-            if lower.endswith(f"_{key}".lower()):
+            if lower.endswith(f'_{key}'.lower()):
                 return key
 
-        return ""
+        return ''
 
     def prepare_tsv(self, url, file_md5=None, repo_id='qizekun/OmniSpatial'):
         data = super().prepare_tsv(url, file_md5)
 
-        SENTINEL_NAME = ".omnispatialbench_extracted"
+        SENTINEL_NAME = '.omnispatialbench_extracted'
         cache_path = get_cache_path(repo_id)
 
         if (cache_path and os.path.isdir(cache_path)
                 and os.path.isfile(os.path.join(cache_path, SENTINEL_NAME))):
             dataset_path = cache_path
         else:
-            def _write_sentinel(sentinel_path, text="ok"):
-                tmp = sentinel_path + ".tmp"
-                with open(tmp, "w", encoding="utf-8") as f:
+            def _write_sentinel(sentinel_path, text='ok'):
+                tmp = sentinel_path + '.tmp'
+                with open(tmp, 'w', encoding='utf-8') as f:
                     f.write(text)
                 os.replace(tmp, sentinel_path)
 
@@ -161,14 +178,14 @@ class OmniSpatialBench(ImageMCQDataset):
                                 out.write(src.read())
 
                 sentinel_path = os.path.join(pth, SENTINEL_NAME)
-                _write_sentinel(sentinel_path, text="done")
-                print('MindCube data extracted to current directory with original layout.')
+                _write_sentinel(sentinel_path, text='done')
+                print('OmniSpatial data extracted to current directory with original layout.')
 
             dataset_path = snapshot_download(
                 repo_id=repo_id,
                 repo_type='dataset',
-                revision="main",
-                allow_patterns=["OmniSpatial-test.zip"],
+                revision='main',
+                allow_patterns=['OmniSpatial-test.zip'],
             )
 
             unzip_hf_zip(dataset_path)
@@ -220,14 +237,14 @@ class OmniSpatialBench(ImageMCQDataset):
         for key, item in options.items():
             option_text += f'\n{key}. {item}'
 
-        # prompt format from omnispatial codebase
+        # prompt format from OmniSpatial codebase
         if self.prompt_mode in self.SYS_PROMPTS.keys():
             system_prompt = self.SYS_PROMPTS[self.prompt_mode]
             prompt = system_prompt + '\n' + RE_FORMAT + '\n\n' + question + option_text
 
-        # EASI also provide direct qa format
+        # EASI also provides direct QA format
         else:
-            prompt = question + option_text + "\nAnswer directly with the option letter from the given choices. "
+            prompt = question + option_text + '\nAnswer directly with the option letter from the given choices. '
 
         msgs = []
         if isinstance(tgt_path, list):
@@ -239,12 +256,15 @@ class OmniSpatialBench(ImageMCQDataset):
         return msgs
 
     def evaluate(self, eval_file, **judge_kwargs):
-        from .utils.spatial_rel_bench.cal_scores import compute_mcq_score, eval_mcq_core
+        from .utils.spatial_bench.cal_scores import eval_mcq_score, build_mcq_score_fn
 
-        raw = eval_mcq_core(
+        # Select MCQ scoring function (rule-based or LLM-based) according to judge_kwargs['model'].
+        score_fn = build_mcq_score_fn(**judge_kwargs)
+
+        raw = eval_mcq_score(
             load_fn=load,
             eval_file=eval_file,
-            score_fn=compute_mcq_score,
+            score_fn=score_fn,
             group_col=['task_type', 'sub_task_type'],
             order={
                 'task_type': list(self.CATEGORY_TASK_ORDER.keys()),
@@ -258,15 +278,15 @@ class OmniSpatialBench(ImageMCQDataset):
 
         for cat, tasks in self.CATEGORY_TASK_ORDER.items():
             for t in tasks:
-                k = f"task.{t}_accuracy"
+                k = f'task.{t}_accuracy'
                 if k in raw:
-                    pretty[f"{t}_accuracy"] = raw[k]
-            cat_key = f"{cat}_accuracy"
+                    pretty[f'{t}_accuracy'] = raw[k]
+            cat_key = f'{cat}_accuracy'
             if cat_key in raw:
                 pretty[cat_key] = raw[cat_key]
 
-        keys_str = ", ".join(pretty.keys())
-        vals_str = ", ".join(f"{v:.3f}" for v in pretty.values())
+        keys_str = ', '.join(pretty.keys())
+        vals_str = ', '.join(f'{v:.3f}' for v in pretty.values())
         pretty['tabulated_keys'] = keys_str
         pretty['tabulated_results'] = vals_str
 

@@ -4,38 +4,31 @@ import ast
 from tqdm import tqdm
 
 from .image_mcq import ImageMCQDataset
-from ..smp.file import LMUDataRoot, load, getenv_bool
+from ..smp.file import load
 from ..smp.misc import toliststr, get_cache_path, modelscope_flag_set
 
 from huggingface_hub import snapshot_download
 
-RUISI_POST_PROMPT = (
-    "Enclose your thinking process in <think> </think> tags and your final answer in <answer> </answer>."
-)
-
 
 class MindCubeBench(ImageMCQDataset):
+    """
+    MindCube.
+
+    Reference:
+      Spatial Mental Modeling from Limited Views
+      https://arxiv.org/abs/2506.21458
+    """
+
     TYPE = 'MCQ'
 
-    MINDCUBE_TASKS = [
-        'raw_qa',
-        'tiny_raw_qa',
-        'tiny_raw_qa_circular',
-        'tiny_aug_cgmap_ffr_out'
-    ]
-
-    LMUData_root = LMUDataRoot()
-    DATASET_URL = {}
-
-    # #TODO:change this to hugging face path after upload
     DATASET_URL = {
-        "MindCubeBench_tiny_raw_qa": "https://huggingface.co/datasets/y-playground/EASI_Mindcube/resolve/main/MindCubeBench_tiny_raw_qa.tsv",  # noqa: E501
-        "MindCubeBench_raw_qa": f"{os.path.join(LMUData_root, 'MindCubeBench_raw_qa.tsv')}",
-        "MindCubeBench_tiny_raw_qa_circular": f"{os.path.join(LMUData_root, 'MindCubeBench_tiny_raw_qa_circular.tsv')}",  # noqa: E501
-        "MindCubeBench_tiny_aug_cgmap_ffr_out": f"{os.path.join(LMUData_root, 'MindCubeBench_tiny_aug_cgmap_ffr_out.tsv')}"  # noqa: E501
+        'MindCubeBench_tiny_raw_qa': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/MindCubeBench_tiny_raw_qa.tsv',  # noqa: E501
+        'MindCubeBench_raw_qa': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/MindCubeBench_raw_qa.tsv'  # noqa: E501
     }
-
-    DATASET_MD5 = {key: None for key in DATASET_URL}
+    DATASET_MD5 = {
+        'MindCubeBench_tiny_raw_qa': '35f69fc30d7c2d2880417ce0769f5347',
+        'MindCubeBench_raw_qa': '6a53cd353bc93d8e3a87098249c806ad'
+    }
 
     def _task_category(self):
         return ['rotation', 'among', 'around']
@@ -43,16 +36,16 @@ class MindCubeBench(ImageMCQDataset):
     def prepare_tsv(self, url, file_md5=None, repo_id='MLL-Lab/MindCube'):
         data = super().prepare_tsv(url, file_md5)
 
-        SENTINEL_NAME = ".mindcubebench_extracted"
+        SENTINEL_NAME = '.mindcubebench_extracted'
         cache_path = get_cache_path(repo_id)
 
-        sentinel_path = os.path.join(cache_path, SENTINEL_NAME)
-        if cache_path and os.path.isfile(sentinel_path):
+        if (cache_path and os.path.isdir(cache_path)
+                and os.path.isfile(os.path.join(cache_path, SENTINEL_NAME))):
             dataset_path = cache_path
         else:
-            def _write_sentinel(sentinel_path, text="ok"):
-                tmp = sentinel_path + ".tmp"
-                with open(tmp, "w", encoding="utf-8") as f:
+            def _write_sentinel(sentinel_path, text='ok'):
+                tmp = sentinel_path + '.tmp'
+                with open(tmp, 'w', encoding='utf-8') as f:
                     f.write(text)
                 os.replace(tmp, sentinel_path)
 
@@ -84,7 +77,8 @@ class MindCubeBench(ImageMCQDataset):
                             with zf.open(info, 'r') as src, open(dst, 'wb') as out:
                                 out.write(src.read())
 
-                _write_sentinel(sentinel_path, text="done")
+                sentinel_path = os.path.join(pth, SENTINEL_NAME)
+                _write_sentinel(sentinel_path, text='done')
                 print('MindCube data extracted to current directory with original layout.')
 
             if modelscope_flag_set():
@@ -123,24 +117,7 @@ class MindCubeBench(ImageMCQDataset):
 
         return data
 
-    # def build_prompt(self, line):
-    #     if isinstance(line, int):
-    #         line = self.data.iloc[line]
-
-    #     if self.meta_only:
-    #         tgt_path = toliststr(line['image_path'])
-    #     else:
-    #         tgt_path = self.dump_image(line)
-
-    #     # # Raw QA prompt format use in paper
-    #     prompt = line['input_prompt']
-
-    #     msgs = self.build_msgs(tgt_path, prompt)
-    #     return msgs
-
     def build_prompt(self, line):
-        use_ruisi_prompt = getenv_bool("use_ruisi_prompt", False)
-
         if isinstance(line, int):
             line = self.data.iloc[line]
 
@@ -150,15 +127,9 @@ class MindCubeBench(ImageMCQDataset):
             tgt_path = self.dump_image(line)
 
         # # Raw QA prompt format use in paper
-        if not use_ruisi_prompt:
-            prompt = line['input_prompt']
-        else:
-            question = line['question']
-            prompt = question + "\n" + RUISI_POST_PROMPT
+        prompt = line['input_prompt']
 
         msgs = self.build_msgs(tgt_path, prompt)
-        # print(f"msgs:{msgs}")
-
         return msgs
 
     @staticmethod
@@ -166,8 +137,6 @@ class MindCubeBench(ImageMCQDataset):
         """
         Interlaced text and pictures
         """
-        peter_test = getenv_bool("peter_test", False)
-
         images = tgt_path if isinstance(tgt_path, list) else [tgt_path]
 
         parts = prompt.split('<image>')
@@ -178,21 +147,21 @@ class MindCubeBench(ImageMCQDataset):
             if part:
                 segs.append(dict(type='text', value=part))
             if (i != len(parts) - 1) and (i < len(images)):
-                if peter_test:
-                    pass
-                else:
-                    segs.append(dict(type='image', value=images[i]))
+                segs.append(dict(type='image', value=images[i]))
 
         return [s for s in segs if s['value']]
 
     def evaluate(self, eval_file, **judge_kwargs):
-        from .utils.spatial_rel_bench.cal_scores import compute_mcq_score, eval_mcq_core
+        from .utils.spatial_bench.cal_scores import eval_mcq_score, build_mcq_score_fn
 
-        return eval_mcq_core(
+        # Select MCQ scoring function (rule-based or LLM-based) according to judge_kwargs['model'].
+        score_fn = build_mcq_score_fn(**judge_kwargs)
+
+        return eval_mcq_score(
             load_fn=load,
             eval_file=eval_file,
-            score_fn=compute_mcq_score,
+            score_fn=score_fn,
             group_col='category',
             order=self._task_category(),
-            dataset_name=getattr(self, 'dataset_name', 'MindCubeBench')
+            dataset_name=getattr(self, 'dataset_name', 'MindCubeBench'),
         )

@@ -8,78 +8,90 @@ from collections import OrderedDict
 from ..smp.misc import toliststr
 from ..smp.file import load
 from .image_base import ImageBaseDataset
-from .utils.spatial_rel_bench.cal_scores import (
-    compute_mcq_score, compute_na_score, mean_relative_accuracy
+from .utils.spatial_bench.cal_scores import (
+    build_mcq_score_fn,
+    build_na_score_fn,
+    mean_relative_accuracy,
+    attach_score_cache,
 )
+from .utils.spatial_bench.tools.files import build_eval_paths, get_judge_tag_from_score_fn
 
 
 class SparBench(ImageBaseDataset):
+    """
+    SPAR-Bench.
+
+    Reference:
+      From Flatland to Space: Teaching Vision-Language Models to Perceive and Reason in 3D
+      https://arxiv.org/abs/2503.22976
+    """
+
     TYPE = 'VQA'
 
-    DATASET_URL = {}
+    DATASET_URL = {
+        'SparBench': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/SparBench.tsv',  # noqa: E501
+        'SparBench_tiny': 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/SparBench_tiny.tsv',  # noqa: E501
+    }
 
-    # DATASET_URL['SparBench'] = 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/SparBench.tsv'  # noqa: E501
-    # DATASET_URL['SparBench_tiny'] = 'https://huggingface.co/datasets/lmms-lab-si/EASI-Leaderboard-Data/resolve/main/SparBench_tiny.tsv'  # noqa: E501
-
-    DATASET_URL['SparBench'] = '/mnt/aigc/wangyubo/data/UG/data/benchmark/opensource_tsv/SparBench.tsv'
-    DATASET_URL['SparBench_tiny'] = '/mnt/aigc/wangyubo/data/UG/data/benchmark/opensource_tsv/SparBench_tiny.tsv'
-
-    DATASET_MD5 = {key: None for key in DATASET_URL}
+    DATASET_MD5 = {
+        'SparBench': 'cb1e5f5855c454241e0a70c3b8152976',
+        'SparBench_tiny': 'c435e186064b795e0a9759aa60465a00',
+    }
 
     TASK_TYPES = {
         'MCQ': [
-            "obj_spatial_relation_oo",
-            "obj_spatial_relation_oc_mv",
-            "obj_spatial_relation_oo_mv",
-            "spatial_imagination_oc",
-            "spatial_imagination_oo",
-            "spatial_imagination_oc_mv",
-            "spatial_imagination_oo_mv",
-            "position_matching",
-            "camera_motion_infer",
-            "distance_infer_center_oo",
-            "distance_infer_center_oo_mv",
+            'obj_spatial_relation_oo',
+            'obj_spatial_relation_oc_mv',
+            'obj_spatial_relation_oo_mv',
+            'spatial_imagination_oc',
+            'spatial_imagination_oo',
+            'spatial_imagination_oc_mv',
+            'spatial_imagination_oo_mv',
+            'position_matching',
+            'camera_motion_infer',
+            'distance_infer_center_oo',
+            'distance_infer_center_oo_mv',
         ],
         'NA': [
-            "depth_prediction_oc",
-            "depth_prediction_oo",
-            "distance_prediction_oc",
-            "distance_prediction_oo",
-            "depth_prediction_oc_mv",
-            "depth_prediction_oo_mv",
-            "distance_prediction_oo_mv",
-            "distance_prediction_oc_mv",
+            'depth_prediction_oc',
+            'depth_prediction_oo',
+            'distance_prediction_oc',
+            'distance_prediction_oo',
+            'depth_prediction_oc_mv',
+            'depth_prediction_oo_mv',
+            'distance_prediction_oo_mv',
+            'distance_prediction_oc_mv',
         ],
         'SPECIAL': [
-            "view_change_infer",
+            'view_change_infer',
         ],
     }
 
     LOW_TASKS = [
-        "depth_prediction_oc", "depth_prediction_oc_mv",
-        "depth_prediction_oo", "depth_prediction_oo_mv",
-        "distance_prediction_oc", "distance_prediction_oc_mv",
-        "distance_prediction_oo", "distance_prediction_oo_mv",
+        'depth_prediction_oc', 'depth_prediction_oc_mv',
+        'depth_prediction_oo', 'depth_prediction_oo_mv',
+        'distance_prediction_oc', 'distance_prediction_oc_mv',
+        'distance_prediction_oo', 'distance_prediction_oo_mv',
     ]
 
     MIDDLE_TASKS = [
-        "position_matching",
-        "camera_motion_infer",
-        "view_change_infer",
+        'position_matching',
+        'camera_motion_infer',
+        'view_change_infer',
     ]
 
     HIGH_TASKS = [
-        "distance_infer_center_oo", "distance_infer_center_oo_mv",
-        "obj_spatial_relation_oc_mv", "obj_spatial_relation_oo", "obj_spatial_relation_oo_mv",
-        "spatial_imagination_oc", "spatial_imagination_oc_mv",
-        "spatial_imagination_oo", "spatial_imagination_oo_mv",
+        'distance_infer_center_oo', 'distance_infer_center_oo_mv',
+        'obj_spatial_relation_oc_mv', 'obj_spatial_relation_oo', 'obj_spatial_relation_oo_mv',
+        'spatial_imagination_oc', 'spatial_imagination_oc_mv',
+        'spatial_imagination_oo', 'spatial_imagination_oo_mv',
     ]
 
     # used to strip suffix
     METRIC_SUFFIXES = (
-        "_MRA:.5:.95:.05",
-        "_accuracy",
-        "_vci_metric",
+        '_MRA:.5:.95:.05',
+        '_accuracy',
+        '_vci_metric',
     )
 
     @classmethod
@@ -90,20 +102,20 @@ class SparBench(ImageBaseDataset):
             return 'NA'
         if task in cls.TASK_TYPES['SPECIAL']:
             return 'SPECIAL'
-        raise ValueError(f"Unsupported SparBench task type: {task}")
+        raise ValueError(f'Unsupported SparBench task type: {task}')
 
     @staticmethod
     def _metric_base_task(metric_key: str) -> str | None:
         """
-        Restore the base task name from the metric key
+        Restore the base task name from the metric key.
         """
-        if metric_key in ("overall", "Low", "Middle", "High"):
+        if metric_key in ('overall', 'Low', 'Middle', 'High'):
             return None
 
         suffixes = [
-            "_MRA:.5:.95:.05",
-            "_accuracy",
-            "_vci_metric",
+            '_MRA:.5:.95:.05',
+            '_accuracy',
+            '_vci_metric',
         ]
         for suf in suffixes:
             if metric_key.endswith(suf):
@@ -124,23 +136,26 @@ class SparBench(ImageBaseDataset):
         pre_prompt = ''
 
         if task_type == 'NA':
-            post_prompt = "Please answer the question using a single word or phrase."
-            prompt = pre_prompt + "\n" + question + "\n" + post_prompt
+            post_prompt = 'Please answer the question using a single word or phrase.'
+            prompt = pre_prompt + '\n' + question + '\n' + post_prompt
 
         elif task_type == 'MCQ':
-            post_prompt = ""
-            if task in ['position_matching', "camera_motion_infer"]:
-                post_prompt = "The values represent the bounding box coordinates normalized to a 0-1000 scale, with the top-left corner as the origin of the image."  # noqa: E501
+            post_prompt = ''
+            if task in ['position_matching', 'camera_motion_infer']:
+                post_prompt = (
+                    'The values represent the bounding box coordinates normalized to a 0-1000 scale, '
+                    'with the top-left corner as the origin of the image.'
+                )
             post_prompt2 = "Answer with the option's letter from the given choices directly."
-            prompt = pre_prompt + "\n" + question + "\n" + post_prompt + "\n" + post_prompt2
+            prompt = pre_prompt + '\n' + question + '\n' + post_prompt + '\n' + post_prompt2
 
         elif task_type == 'SPECIAL':
-            post_prompt1 = ""
-            post_prompt2 = ""
-            prompt = pre_prompt + "\n" + question + "\n" + post_prompt1 + "\n" + post_prompt2
+            post_prompt1 = ''
+            post_prompt2 = ''
+            prompt = pre_prompt + '\n' + question + '\n' + post_prompt1 + '\n' + post_prompt2
 
         else:
-            raise ValueError(f"Unknown question type: {task}")
+            raise ValueError(f'Unknown question type: {task}')
 
         msgs = []
         if isinstance(tgt_path, list):
@@ -152,9 +167,6 @@ class SparBench(ImageBaseDataset):
         return msgs
 
     def evaluate(self, eval_file, **judge_kwargs):
-        suffix = eval_file.split('.')[-1]
-        result_file = eval_file.replace(f'.{suffix}', '_result.pkl')
-
         data = load(eval_file)
         data = data.sort_values(by='index')
         data['prediction'] = [str(x) for x in data['prediction']]
@@ -165,26 +177,51 @@ class SparBench(ImageBaseDataset):
         na_data = data[data['task_type'] == 'NA'].copy()
         special_data = data[data['task_type'] == 'SPECIAL'].copy()
 
-        print(f"[split] MCQ={len(mcq_data)}, NA={len(na_data)}, SPECIAL={len(special_data)}")
+        splits = {'mcq': mcq_data, 'na': na_data, 'special': special_data}
+        print(f'[split] MCQ={len(mcq_data)}, NA={len(na_data)}, SPECIAL={len(special_data)}')
 
-        if len(mcq_data):
-            mcq_scored = compute_mcq_score(mcq_data)
-        else:
-            mcq_scored = mcq_data
+        # 1. build score_fns
+        builders = {
+            'mcq': build_mcq_score_fn,
+            'na': build_na_score_fn,
+        }
+        score_fns = {
+            name: (builders[name](**judge_kwargs) if len(splits[name]) else None)
+            for name in ('mcq', 'na')
+        }
 
-        if len(na_data):
-            na_scored = compute_na_score(na_data)
+        # 2. pick a non-None score_fn to infer judge_tag
+        primary_score_fn = score_fns.get('mcq') or score_fns.get('na')
+        if primary_score_fn is not None:
+            judge_tag = get_judge_tag_from_score_fn(primary_score_fn)
         else:
-            na_scored = na_data
+            judge_tag = 'extract_matching'
 
-        if len(special_data):
-            sp_scored = self.compute_special_score(special_data)
-        else:
-            sp_scored = special_data
+        result_file, xlsx_path, acc_tsv_path = build_eval_paths(eval_file, judge_tag)
+
+        # 3. attach cache files for each sub-scorer
+        for sub_tag, fn in score_fns.items():
+            if fn is not None:
+                attach_score_cache(
+                    score_fn=fn,
+                    eval_file=eval_file,
+                    judge_tag=judge_tag,
+                    key_col='index',
+                    sub_tag=sub_tag,
+                )
+
+        # 4. run scoring
+        mcq_scored = score_fns['mcq'](mcq_data) if score_fns['mcq'] else mcq_data
+        na_scored = score_fns['na'](na_data) if score_fns['na'] else na_data
+        sp_scored = (
+            self.compute_special_score(special_data)
+            if len(special_data)
+            else special_data
+        )
 
         summary = self._aggregate(mcq_scored, na_scored, sp_scored)
 
-        print(f"[SparBench] summary: {summary}")
+        print(f'[SparBench] summary: {summary}')
 
         # ---- save pkl dump ----
         try:
@@ -192,18 +229,13 @@ class SparBench(ImageBaseDataset):
                 'mcq_scored': mcq_scored,
                 'na_scored': na_scored,
                 'special_scored': sp_scored,
-                'summary': summary
+                'summary': summary,
             }
             with open(result_file, 'wb') as f:
                 pickle.dump(to_dump, f)
-            print(f"[save] result saved to {result_file}")
+            print(f'[save] result saved to {result_file}')
         except Exception as e:
-            warnings.warn(f"[save] failed to save result to {result_file}: {e}")
-
-        # ---- prepare paths for xlsx / tsv ----
-        base_no_suffix = eval_file[:-(len(suffix) + 1)]
-        xlsx_path = f"{base_no_suffix}_extract_matching.xlsx"
-        acc_tsv_path = f"{base_no_suffix}_acc.tsv"
+            warnings.warn(f'[save] failed to save result to {result_file}: {e}')
 
         # ---- save extract_matching.xlsx ----
         try:
@@ -234,19 +266,19 @@ class SparBench(ImageBaseDataset):
             prefer_front = [
                 'index', 'task', 'task_type',
                 'prediction', 'pred_extracted', 'answer',
-                'hit', 'MRA:.5:.95:.05', 'vci_metric'
+                'hit', 'MRA:.5:.95:.05', 'vci_metric',
             ]
             ordered = [c for c in prefer_front if c in merged.columns] + \
                 [c for c in merged.columns if c not in prefer_front]
             merged = merged[ordered]
 
-            with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
-                merged.to_excel(writer, sheet_name="ALL", index=False)
+            with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
+                merged.to_excel(writer, sheet_name='ALL', index=False)
 
-            print(f"[save] extract & matching saved to {xlsx_path}")
+            print(f'[save] extract & matching saved to {xlsx_path}')
 
         except Exception as e:
-            warnings.warn(f"[save] failed to save merged extract xlsx: {e}")
+            warnings.warn(f'[save] failed to save merged extract xlsx: {e}')
 
         # ---- save acc.tsv ----
         try:
@@ -267,18 +299,18 @@ class SparBench(ImageBaseDataset):
             row_full = dict(summary_clean)
 
             acc_df = pd.DataFrame([row_summary, row_full], columns=cols)
-            acc_df.to_csv(acc_tsv_path, sep="\t", index=False)
-            print(f"[save] accuracy table saved to {acc_tsv_path}")
+            acc_df.to_csv(acc_tsv_path, sep='\t', index=False)
+            print(f'[save] accuracy table saved to {acc_tsv_path}')
 
         except Exception as e:
-            warnings.warn(f"[save] failed to save acc tsv: {e}")
+            warnings.warn(f'[save] failed to save acc tsv: {e}')
 
-        print(f"[{self.dataset_name}] summary: {summary}")
+        print(f'[{self.dataset_name}] summary: {summary}')
         return summary
 
     @staticmethod
     def _parse_instruction(instruction: str) -> dict[str, float]:
-        # "move_right:0.3,move_left:0.1" -> dict
+        # 'move_right:0.3,move_left:0.1' -> dict
         if instruction is None:
             return {}
         d = {}
@@ -296,11 +328,11 @@ class SparBench(ImageBaseDataset):
     @classmethod
     def _compute_vci_metric(cls, pred: str, answer: str) -> float:
         action_order = [
-            ("move_right", "move_left"),
-            ("move_up", "move_down"),
-            ("move_forward", "move_backward"),
-            ("rotate_right", "rotate_left"),
-            ("rotate_up", "rotate_down"),
+            ('move_right', 'move_left'),
+            ('move_up', 'move_down'),
+            ('move_forward', 'move_backward'),
+            ('rotate_right', 'rotate_left'),
+            ('rotate_up', 'rotate_down'),
         ]
         p = cls._parse_instruction(pred)
         g = cls._parse_instruction(answer)
@@ -309,12 +341,12 @@ class SparBench(ImageBaseDataset):
         for a_pos, a_neg in action_order:
             pred_v = p.get(a_pos, 0.0) - p.get(a_neg, 0.0)
             gt_v = g.get(a_pos, 0.0) - g.get(a_neg, 0.0)
-            vals.append(mean_relative_accuracy(pred_v, gt_v, .5, .95, .05))
+            vals.append(mean_relative_accuracy(pred_v, gt_v, 0.5, 0.95, 0.05))
         return float(np.mean(vals)) if len(vals) else 0.0
 
     def compute_special_score(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        add col 'vci_metric'
+        Add column 'vci_metric'.
         """
         vals = []
         for _, r in df.iterrows():

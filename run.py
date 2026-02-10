@@ -473,6 +473,8 @@ def main():
                         judge_kwargs['model'] = 'gpt-4.1'
                     elif listinstr(['MathCanvas'], dataset_name):
                         judge_kwargs['model'] = 'gpt-4.1-2025-04-14'
+                    elif listinstr(['MMReason'], dataset_name):
+                        judge_kwargs['model'] = 'gpt-4.1'
 
                     judge_kwargs['model'] = 'gpt-4o-2024-11-20_proxy'
 
