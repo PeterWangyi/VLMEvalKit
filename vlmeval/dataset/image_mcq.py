@@ -2389,7 +2389,6 @@ class _3DSRBench(ImageMCQDataset):
     DATASET_MD5 = {'3DSRBench': '610516a0b4710595545b7613c60524e8'}
 
     def evaluate(self, eval_file, **judge_kwargs):
-        import tempfile
         from .utils.multiple_choice import mcq_vanilla_eval, report_acc
 
         nproc = judge_kwargs.pop('nproc', 4)
@@ -2403,6 +2402,8 @@ class _3DSRBench(ImageMCQDataset):
                 warnings.warn('OPENAI API is not working properly, will use exact matching for evaluation')
                 warnings.warn(DEBUG_MESSAGE)
                 model = None
+
+        result_file = get_intermediate_file_path(eval_file, f'_{name_str}_result', 'pkl')
 
         data = load(eval_file)
         data = data.sort_values(by='index')
@@ -2418,10 +2419,7 @@ class _3DSRBench(ImageMCQDataset):
                 f'eval_file should be the same as or a subset of dataset {self.dataset_name}'
             )
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            result_file = osp.join(tmp_dir, 'result.pkl')
-            data = mcq_vanilla_eval(model, data, meta, nproc, result_file, self.dataset_name)
-
+        data = mcq_vanilla_eval(model, data, meta, nproc, result_file, self.dataset_name)
         result_xlsx = get_intermediate_file_path(eval_file, '_result', 'xlsx')
         dump(data, result_xlsx)
 
