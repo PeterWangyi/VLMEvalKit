@@ -2389,21 +2389,41 @@ class _3DSRBench(ImageMCQDataset):
     DATASET_MD5 = {'3DSRBench': '610516a0b4710595545b7613c60524e8'}
 
     def evaluate(self, eval_file, **judge_kwargs):
-        super().evaluate(eval_file, **judge_kwargs)
-        import glob
-        from .utils.multiple_choice import report_acc
-        dname = osp.dirname(eval_file)
-        fname = osp.basename(eval_file)
-        base, _ = osp.splitext(fname)
+        import tempfile
+        from .utils.multiple_choice import mcq_vanilla_eval, report_acc
 
-        pattern = osp.join(dname, f"{base}_*_result.xlsx")
-        result_files = glob.glob(pattern)
+        nproc = judge_kwargs.pop('nproc', 4)
+        model = judge_kwargs.get('model', 'exact_matching')
 
-        if len(result_files) != 1:
-            raise RuntimeError(f"Expected 1 result file, got {len(result_files)}: {result_files}")
+        if model == 'exact_matching':
+            model = None
+        else:
+            model = build_judge(**judge_kwargs)
+            if not model.working():
+                warnings.warn('OPENAI API is not working properly, will use exact matching for evaluation')
+                warnings.warn(DEBUG_MESSAGE)
+                model = None
 
-        result_file = result_files[0]
-        data = load(result_file)
+        data = load(eval_file)
+        data = data.sort_values(by='index')
+        data['prediction'] = [str(x) for x in data['prediction']]
+        for k in data.keys():
+            data[k.lower() if k not in list(string.ascii_uppercase) else k] = data.pop(k)
+
+        meta = self.data
+        meta_q_map = {x: y for x, y in zip(meta['index'], meta['question'])}
+        data_map = {x: y for x, y in zip(data['index'], data['question'])}
+        for k in data_map:
+            assert k in meta_q_map, (
+                f'eval_file should be the same as or a subset of dataset {self.dataset_name}'
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            result_file = osp.join(tmp_dir, 'result.pkl')
+            data = mcq_vanilla_eval(model, data, meta, nproc, result_file, self.dataset_name)
+
+        result_xlsx = get_intermediate_file_path(eval_file, '_result', 'xlsx')
+        dump(data, result_xlsx)
 
         acc_map = {}
         acc_map['vanilla'] = report_acc(data)
@@ -2441,8 +2461,12 @@ class _3DSRBench(ImageMCQDataset):
             acc_map[k]['setting'] = [k] * len(acc_map[k])
             metrics.append(acc_map[k])
         res_all = pd.concat(metrics)
+        if 'setting' in res_all.columns:
+            res_all = res_all[['setting'] + [c for c in res_all.columns if c != 'setting']]
+
         print(res_all)
-        dump(res_all, eval_file.replace('.xlsx', '_full_acc.csv'))
+        results_file = osp.splitext(eval_file)[0] + '_results.tsv'
+        dump(res_all, results_file)
         return res_all
 
 
